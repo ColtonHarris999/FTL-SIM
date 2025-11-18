@@ -1,0 +1,21 @@
+physical:
+  bits_per_cell: 3
+  bytes_per_page: 16KiB
+  pages_per_block: 256
+  blocks_per_plane: 2048
+  planes_per_die: 2
+  dies_per_package: 2
+  packages: 8
+
+ecc:
+  type: LDPC               # NONE, BCH, LDPC
+  bits_per_1k: 80
+
+dram:
+  total_bytes: 512MiB
+  fast_ftl_bytes: 64MiB
+
+mapping:
+  base_granularity: Block      # Block, Page, SubPage
+  fast_granularity: Page
+  subpages_per_page: 4
