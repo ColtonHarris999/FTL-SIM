@@ -1,0 +1,48 @@
+# ============================
+# Build artifacts
+# ============================
+build/
+build*/          # in case someone names build folders like build-debug
+out/
+
+# Binaries
+*.exe
+*.out
+*.o
+*.obj
+*.dll
+*.so
+*.a
+*.lib
+
+# CMake cache and files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+install_manifest.txt
+
+# VSCode settings
+.vscode/
+
+# CLion / JetBrains
+.idea/
+cmake-build*/
+*.iml
+
+# OS-specific junk
+.DS_Store
+Thumbs.db
+
+# Backup / temp files
+*~
+*.swp
+*.tmp
+
+# ============================
+# yaml-cpp build outputs
+# (source stays in external/, but build should NOT be tracked)
+# ============================
+external/yaml-cpp/build*/
+external/yaml-cpp/CMakeFiles/
+external/yaml-cpp/CMakeCache.txt

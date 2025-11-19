@@ -1,5 +1,5 @@
 #pragma once
-#include "ftl_geometry.hpp"
+#include "ftl-geometry.hpp"
 
 // How many logical units exist for a given mapping granularity?
 inline std::uint64_t units_for_granularity(

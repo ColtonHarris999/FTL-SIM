@@ -1,6 +1,6 @@
 // yaml_loader.hpp
 #pragma once
-#include "ftl_config.hpp"
+#include "ftl-config.hpp"
 #include <yaml-cpp/yaml.h>
 #include <regex>
 #include <string>
