@@ -1,6 +1,11 @@
 from enum import Enum
 
 
+class Timing:
+    READ_US = 50
+    PROGRAM_US = 200
+
+
 class PageState(Enum):
     FREE = "free"
     VALID = "valid"

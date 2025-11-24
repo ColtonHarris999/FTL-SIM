@@ -3,6 +3,9 @@ from collections import deque
 from enum import Enum
 from typing import List
 
+from channel import Channel
+from event import EventLoop, EventType
+from nand import Timing
 from request import Request, RequestStatus, RequestType
 
 
@@ -15,10 +18,12 @@ class ActionType(Enum):
 class Scheduler(ABC):
     """Scheduler interface"""
 
-    latency: float = 0.0  # time taken to make scheduling decision
+    def __init__(self, event_loop: "EventLoop", channel: "Channel"):
+        self.event_loop = event_loop
+        self.channel = channel
 
     @abstractmethod
-    def schedule(self, ncq: List[Request], nand_ready: bool) -> List[Request]:
+    def schedule(self, ncq: List[Request], nand_ready: bool):
         pass
 
 
@@ -28,14 +33,65 @@ class FIFOScheduler(Scheduler):
     Always schedules the oldest request in the queue
     """
 
-    latency: float = 0.1  # us
-
-    def schedule(self, ncq: List[Request], nand_ready: bool) -> List[Request]:
+    def schedule(self, ncq: List[Request], nand_ready: bool):
+        if not ncq:
+            return []
         req = ncq[0]
-        if nand_ready and req.status == RequestStatus.READY:
+        if req.status == RequestStatus.READY and nand_ready:
             print(f"FIFOScheduler: scheduling {req}")
-            return [req]
-        return []
+            req.start_time = self.event_loop.time_us
+            req.status = RequestStatus.IN_PROGRESS
+            self.nand_ready = False
+
+            match req.type:
+                case RequestType.WRITE:
+                    self.channel.do_dma(req)
+                case RequestType.READ:
+                    self.event_loop.schedule_event(
+                        self.event_loop.time_us + Timing.READ_US,
+                        EventType.NAND_READ_COMPLETE,
+                        req,
+                    )
+        # for req in self.ncq:
+        #     if req.status != RequestStatus.READY:
+        #         continue
+
+        #     req.status = RequestStatus.IN_PROGRESS
+        #     if req.type == RequestType.WRITE:
+        #         # For writes, always start DMA -> cache
+        #         self.cache.add_write(req)
+        #         # mark host completion: we assume write-back cache -> complete to host now
+        #         self.event_loop.schedule_event(self.event_loop.time_us, EventType.COMPLETE_TO_HOST, req)
+        #         # maybe trigger cache flush if threshold met
+        #         if self.cache.ready_to_flush(threshold_bytes=64 * 1024):
+        #             self.event_loop.schedule_event(self.event_loop.time_us, EventType.CACHE_FLUSH, None)
+        #     elif req.type == RequestType.READ:
+        #         # # simple read path: if mapping in cache, return quickly; else schedule NAND read
+        #         # phys = self.ftl.lookup(req.lba)
+        #         # if phys is None:
+        #         #     # data not present (e.g., fresh), complete immediately
+        #         #     self.event_loop.schedule_event(self.event_loop.time_us, EventType.COMPLETE_TO_HOST, req)
+        #         # else:
+        #         #     # schedule NAND read latency
+        #         #     self.event_loop.schedule_event(
+        #         #         self.event_loop.time_us + self.read_us, EventType.COMPLETE_TO_HOST, req
+        #         #     )
+        #         if self.cache.has_pending_write(req.lba):
+        #             # Serve read from cache immediately
+        #             self.event_loop.schedule_event(self.event_loop.time_us, EventType.COMPLETE_TO_HOST, req)
+        #         elif self.pending_write_in_ncq(req.lba):
+        #             # Delay this read: do not start NAND read yet
+        #             continue
+        #         else:
+        #             phys = self.ftl.lookup(req.lba)
+        #             if phys is None:
+        #                 self.event_loop.schedule_event(
+        #                     self.event_loop.time_us, EventType.COMPLETE_TO_HOST, req
+        #                 )
+        #             else:
+        #                 self.event_loop.schedule_event(
+        #                     self.event_loop.time_us + self.read_us, EventType.COMPLETE_TO_HOST, req
+        #                 )
 
 
 class NaiveReadScheduler(Scheduler):
@@ -44,9 +100,7 @@ class NaiveReadScheduler(Scheduler):
     Similar to FIFOScheduler but always prioritizes read requests
     """
 
-    latency: float = 0.5  # us
-
-    def schedule(self, ncq: List[Request], nand_ready: bool) -> List[Request]:
+    def schedule(self, ncq: List[Request], nand_ready: bool):
         if nand_ready:
             # try to find read with no RAW conflicts
             for req in ncq:
@@ -59,14 +113,23 @@ class NaiveReadScheduler(Scheduler):
                         if write.type == RequestType.WRITE
                     )
                 ):
-                    return [req]
+                    req.start_time = self.event_loop.time_us
+                    req.status = RequestStatus.IN_PROGRESS
+                    self.nand_ready = False
+
+                    self.event_loop.schedule_event(
+                        self.event_loop.time_us + Timing.READ_US,
+                        EventType.NAND_READ_COMPLETE,
+                        req,
+                    )
 
             # no read found, schedule oldest write instead
             for req in ncq:
                 if req.status == RequestStatus.READY and req.type == RequestType.WRITE:
-                    return [req]
-
-        return []
+                    req.start_time = self.event_loop.time_us
+                    req.status = RequestStatus.IN_PROGRESS
+                    self.nand_ready = False
+                    self.channel.do_dma(req)
 
 
 # class CoalescingReadScheduler(Scheduler):

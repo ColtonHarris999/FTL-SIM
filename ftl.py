@@ -3,8 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class PhysicalAddress:
-    # channel: int
-    # chip: int
+    chip: int
     die: int
     plane: int
     block: int
@@ -15,10 +14,10 @@ class PhysicalAddress:
 class FlashTranslationLayer:
     def __init__(
         self,
-        page_size: int,
-        pages_per_block: int,
-        blocks_per_plane: int,
-        planes_per_die: int,
+        page_size: int = 4 * 1024,
+        pages_per_block: int = 256,
+        blocks_per_plane: int = 1024,
+        planes_per_die: int = 1,
     ):
         self.page_size: int = page_size
         self.pages_per_block: int = pages_per_block
@@ -32,5 +31,5 @@ class FlashTranslationLayer:
     def map(self, lba: int, page: PhysicalAddress):
         self.mapping[lba] = page
 
-    def get_physical(self, lba: int) -> PhysicalAddress:
+    def lookup(self, lba: int) -> PhysicalAddress:
         return self.mapping.get(lba)
