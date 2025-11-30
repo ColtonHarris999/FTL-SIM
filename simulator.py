@@ -1,26 +1,24 @@
 from typing import List
 
 from cache import WriteCache
-from channel import Channel
 from event import EventLoop, EventType
 from ftl import FlashTranslationLayer
-from nand import Timing
+from nand import NAND
 from request import Request, RequestStatus, RequestType
-from scheduler import FIFOScheduler, NaiveReadScheduler, Scheduler
+from scheduler import FIFOScheduler, NaiveReadScheduler
 
 
 class SSDSimulator:
     """Main SSD simulator with request scheduling"""
 
     def __init__(self, ncq_size: int = 32):
-        # event queue
         self.event_loop = EventLoop(dispatch_callback=self.dispatch_event)
 
         # Components
-        self.ftl: FlashTranslationLayer = FlashTranslationLayer()
-        self.write_cache = WriteCache()
-        self.channel = Channel(self.event_loop)
-        self.scheduler: Scheduler = NaiveReadScheduler(self.event_loop, self.channel)
+        self.nand = NAND(self.event_loop)
+        self.ftl = FlashTranslationLayer(self.nand)
+        self.scheduler = FIFOScheduler(self.event_loop, self.nand)
+        self.write_cache = WriteCache(self.event_loop, self.ftl, self.scheduler)
 
         # NCQ (Native Command Queue)
         self.ncq_size: int = ncq_size
@@ -30,57 +28,49 @@ class SSDSimulator:
         self.requests: List[Request] = []
         self.completed_requests: List[Request] = []
 
-        # TODO replace with proper die/plane datastructure
-        self.nand_ready = True
-
     def dispatch_event(self, ev_type, payload):
-        print(
-            f"========= T={self.event_loop.time_us}: Dispatching {ev_type} for {payload} ========="
-        )
         match ev_type:
             case EventType.ARRIVAL:
                 self.handle_arrival(payload)
-            case EventType.DMA_COMPLETE:
-                self.handle_dma_complete(payload)
-            case EventType.NAND_READ_COMPLETE:
-                self.channel.do_dma(payload)
-            case EventType.NAND_PROGRAM_COMPLETE:
+            case EventType.REQUEST_COMPLETE:
                 self.handle_completion(payload)
-            # case EventType.CACHE_FLUSH:
-            #     self.handle_cache_flush()
+            case EventType.CACHE_READ_COMPLETE:
+                self.write_cache.handle_event(ev_type, payload)
+            case EventType.CACHE_WRITE_COMPLETE:
+                self.write_cache.handle_event(ev_type, payload)
+            case EventType.NAND_READ_COMPLETE:
+                self.nand.handle_event(ev_type, payload)
+            case EventType.NAND_WRITE_COMPLETE:
+                self.nand.handle_event(ev_type, payload)
+            case EventType.DMA_COMPLETE:
+                self.nand.handle_event(ev_type, payload)
             case _:
                 raise NotImplementedError
 
     def handle_arrival(self, req: Request):
         """
         Handle the arrival of a new request by enqueuing it into the NCQ.
-        Arrival events are only created when there is space in the NCQ.
+        Arrival events are only created when there is free space in the NCQ.
         """
         print(f"Request arrived: {req}, time: {self.event_loop.time_us} us")
         req.enqueue_time = self.event_loop.time_us
         self.ncq.append(req)
 
-        # run NCQ scheduler
-        self.scheduler.schedule(self.ncq, self.nand_ready)
-
-    def handle_dma_complete(self, req: Request):
-        """
-        Handle the completion of a DMA operation for the given request.
-        """
-        print(f"DMA complete for {req}")
-        if req.type == RequestType.READ:
-            # read operation is done after DMA transfer
-            self.handle_completion(req)
-        elif req.type == RequestType.WRITE:
-            # schedule NAND program
-            self.event_loop.schedule_event(
-                self.event_loop.time_us + Timing.PROGRAM_US,
-                EventType.NAND_PROGRAM_COMPLETE,
-                req,
-            )
-
-        # Execute queued DMA requests if any, otherwise mark DMA as not busy
-        self.channel.complete()
+        # forward WRITE and cached READ requests to the cache
+        match req.type:
+            case RequestType.WRITE:
+                self.write_cache.put(req)
+            case RequestType.READ:
+                if self.write_cache.will_contain(req.lba):
+                    self.write_cache.get(req)
+                else:
+                    req.physical_addr = self.ftl.lookup(req.lba)
+                    self.scheduler.enqueue(req)
+                    self.scheduler.schedule()
+            case RequestType.FLUSH:
+                raise NotImplementedError
+            case _:
+                raise NotImplementedError
 
     def handle_completion(self, req: Request):
         """
@@ -91,14 +81,13 @@ class SSDSimulator:
         create an event for the arrival of the next request if available.
         """
         print(f"Completed {req}")
+
+        # update request status and move to completed list
+        # if not req.status == RequestStatus.COMPLETED:
         req.completion_time = self.event_loop.time_us
         req.status = RequestStatus.COMPLETED
         self.ncq.remove(req)
         self.completed_requests.append(req)
-
-        # free resources
-        if req.type in [RequestType.READ, RequestType.WRITE]:
-            self.nand_ready = True
 
         # add event for next request
         if self.requests:
@@ -106,8 +95,8 @@ class SSDSimulator:
             arrival_time = max(next_req.arrival_time, self.event_loop.time_us)
             self.event_loop.schedule_event(arrival_time, EventType.ARRIVAL, next_req)
 
-        # run NCQ scheduler
-        self.scheduler.schedule(self.ncq, self.nand_ready)
+        # run NCQ scheduler because NAND die is freed
+        self.scheduler.schedule()
 
     def run_simulation(self, requests: List[Request]):
         """

@@ -1,35 +1,26 @@
-from dataclasses import dataclass
-
-
-@dataclass
-class PhysicalAddress:
-    chip: int
-    die: int
-    plane: int
-    block: int
-    page: int
-    offset: int
+from typing import Optional
+from nand import NAND, PhysicalAddress
 
 
 class FlashTranslationLayer:
     def __init__(
         self,
-        page_size: int = 4 * 1024,
-        pages_per_block: int = 256,
-        blocks_per_plane: int = 1024,
-        planes_per_die: int = 1,
+        nand: NAND,
     ):
-        self.page_size: int = page_size
-        self.pages_per_block: int = pages_per_block
-        self.blocks_per_plane: int = blocks_per_plane
-        self.planes_per_die: int = planes_per_die
+        self.nand = nand
         self.mapping: dict[int, PhysicalAddress] = {}
+        self.counter = 0  # stub counter for physical page allocation
 
     def clear(self):
         self.mapping.clear()
 
-    def map(self, lba: int, page: PhysicalAddress):
-        self.mapping[lba] = page
+    def lookup(self, lpa: int) -> Optional[PhysicalAddress]:
+        return self.mapping.get(lpa)
 
-    def lookup(self, lba: int) -> PhysicalAddress:
-        return self.mapping.get(lba)
+    def allocate(self, lpa: int) -> PhysicalAddress:
+        # TODO implement
+        # TODO call GC if needed
+        pa = PhysicalAddress(0, 0, 0, 0, self.counter)
+        self.counter += 1
+        self.mapping[lpa] = pa
+        return pa

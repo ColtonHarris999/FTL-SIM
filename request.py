@@ -1,16 +1,19 @@
-from enum import Enum
+from enum import Enum, auto
+from typing import Optional
+
+from nand import PhysicalAddress
 
 
 class RequestType(Enum):
-    READ = "read"
-    WRITE = "write"
-    FLUSH = "flush"
+    READ = auto()
+    WRITE = auto()
+    FLUSH = auto()
 
 
 class RequestStatus(Enum):
-    READY = "ready"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
+    READY = auto()
+    IN_PROGRESS = auto()
+    COMPLETED = auto()
 
 
 class Request:
@@ -18,26 +21,31 @@ class Request:
 
     _id_counter = 0
 
-    def __init__(self, req_type, logical_addr, arrival_time=0.0):
+    def __init__(
+        self, req_type: RequestType, lba: int, arrival_time: float = 0.0
+    ):
+        # Assign unique ID
         self.id = Request._id_counter
         Request._id_counter += 1
+
+        # Request attributes
         self.type = req_type
         self.status = RequestStatus.READY
-        self.logical_addr = logical_addr
+        self.fua = False  # Force Unit Access flag
+        self.lba = lba
+        self.physical_addr: Optional[PhysicalAddress] = None
+
+        # Timing info
         self.arrival_time = arrival_time
-        self.enqueue_time = None  # When it was enqueued in the NCQ
-        self.start_time = None  # When processing begins
-        self.completion_time = None  # When processing completes
+        self.enqueue_time: Optional[float] = None  # When it was enqueued in the NCQ
+        self.start_time: Optional[float] = None  # When processing begins
+        self.completion_time: Optional[float] = None  # When processing completes
         self.device_latency = 0.0  # Actual flash operation time
         self.ftl_latency = 0.0  # FTL lookup/mapping time
         self.gc_latency = 0.0  # Garbage collection time (if triggered)
 
     def __str__(self):
         return f"(Request {self.id})"
-
-    # def __lt__(self, other):
-    #     # For priority queue ordering
-    #     return self.arrival_time < other.arrival_time
 
     def get_response_time(self):
         """Total response time: arrival to completion"""
