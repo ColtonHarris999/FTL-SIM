@@ -50,14 +50,18 @@ class SSDSimulator:
         self.requests = requests[self.frontend_scheduler.ncq_size :]
 
         # start event loop
-        print("Starting simulation...")
+        print("==================================================")
+        print("Starting simulation")
+        print("==================================================")
+
         self.event_loop.run()
+
+        print("==================================================")
+        print(f"Simulation done in {self.event_loop.time_us} us")
+        print("==================================================")
 
     def print_statistics(self):
         # TODO compute more statistics
-        print(
-            f"================= Simulation done in {self.event_loop.time_us} us ================="
-        )
         avg_write_response_time: float = 0
         avg_read_response_time: float = 0
         for req in sorted(self.completed_requests, key=lambda r: r.id):

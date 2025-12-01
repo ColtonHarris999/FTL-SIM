@@ -5,7 +5,7 @@ from enum import Enum, auto
 from typing import Optional
 
 from event import EventLoop, EventType
-from request import Request, RequestType
+from request import Request, RequestStatus, RequestType
 
 
 @dataclass(frozen=True)
@@ -22,11 +22,12 @@ class NANDTransactionType(Enum):
     WRITE = auto()
 
 
-@dataclass(frozen=True)
+@dataclass
 class NANDTransaction:
     type: NANDTransactionType
     pa: PhysicalAddress
-    completed_requests: list[Request]
+    payload: Optional[object] = None
+    status: RequestStatus = RequestStatus.READY  # TODO: replace with own enum?
     depends_on: Optional[NANDTransaction] = None
 
 
@@ -67,17 +68,6 @@ class NAND:
             Channel(event_loop, dma_us) for _ in range(num_channels)
         ]
         self.dies = [Plane() for _ in range(num_channels * num_dies_per_channel)]
-
-    def handle_event(self, ev_type, payload):
-        match ev_type:
-            case EventType.NAND_READ_COMPLETE:
-                pass
-            case EventType.NAND_WRITE_COMPLETE:
-                pass
-            case EventType.DMA_COMPLETE:
-                pass
-            case _:
-                raise NotImplementedError
 
     def is_ready(self, physical_addr: PhysicalAddress) -> bool:
         return not self.dies[physical_addr.die].busy

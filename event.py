@@ -54,11 +54,13 @@ class EventLoop:
         if event.seq is None:
             event.seq = next(self._seq)
         heapq.heappush(self._ev_heap, event)
-        print(f"Scheduled event {event.ev_type} at {event.time_us} us")
+        print(f"+ Scheduled {event.ev_type} (seq={event.seq}) at t={event.time_us} us")
 
     def cancel_event(self, event: Event) -> None:
         event.canceled = True
-        print(f"Canceled event {event.ev_type} scheduled at {event.time_us} us")
+        print(
+            f"- Canceled {event.ev_type} (seq={event.seq}) scheduled at t={event.time_us} us"
+        )
 
     def run(self, until_us: Optional[float] = None) -> None:
         while self._ev_heap:
@@ -71,9 +73,11 @@ class EventLoop:
             if event.canceled:
                 continue  # Skip canceled events
 
+            print(50 * "-")
             print(
-                f"========= T={event.time_us}: Dispatching {event.ev_type} for {event.payload} ========="
+                f"t={event.time_us} us: Dispatching {event.ev_type} (seq={event.seq}) with payload={event.payload}"
             )
+
             self.time_us = event.time_us
             event.dispatched = True
             handler = self.handlers.get(event.ev_type)

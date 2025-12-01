@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import List
 
-from event import EventLoop, EventType
-from nand import NAND, NANDTransaction
+from event import Event, EventLoop, EventType
+from nand import NAND, NANDTransaction, NANDTransactionType
 from request import Request, RequestStatus, RequestType
 
 
@@ -18,8 +18,9 @@ class NANDScheduler(ABC):
     def schedule(self):
         pass
 
-    def enqueue(self, req: NANDTransaction):
-        self.queue.append(req)
+    def enqueue(self, transaction: NANDTransaction):
+        self.queue.append(transaction)
+        self.schedule()
 
 
 class FIFOScheduler(NANDScheduler):
@@ -31,16 +32,27 @@ class FIFOScheduler(NANDScheduler):
     def schedule(self):
         if not self.queue:
             return
-        req = self.queue[0]
-        if req.status == RequestStatus.READY:
-            req.start_time = self.event_loop.time_us
-            req.status = RequestStatus.IN_PROGRESS
+        transaction: NANDTransaction = self.queue.pop(0)
+        transaction.status = RequestStatus.IN_PROGRESS
 
-            match req.type:
-                case RequestType.WRITE:
-                    self.nand.write_page(req)
-                case RequestType.READ:
-                    self.nand.read_page(req)
+        # TODO: remove stub
+        match transaction.type:
+            case NANDTransactionType.WRITE:
+                event: Event = Event(
+                    time_us=self.event_loop.time_us + 500,
+                    ev_type=EventType.NAND_WRITE_COMPLETE,
+                    payload=transaction,
+                )
+                self.event_loop.schedule_event(event)
+                # self.nand.write_page(transaction)
+            case NANDTransactionType.READ:
+                event: Event = Event(
+                    time_us=self.event_loop.time_us + 100,
+                    ev_type=EventType.NAND_READ_COMPLETE,
+                    payload=transaction,
+                )
+                self.event_loop.schedule_event(event)
+                # self.nand.read_page(transaction)
 
 
 class NaiveReadScheduler(NANDScheduler):
@@ -50,6 +62,7 @@ class NaiveReadScheduler(NANDScheduler):
     """
 
     def schedule(self):
+        print("! Running NAND scheduler")
         # try to find reads with no RAW conflicts
         hazards = set()
         for req in self.queue:

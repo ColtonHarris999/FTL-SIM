@@ -8,6 +8,8 @@ from event import Event
 if TYPE_CHECKING:
     from typing import Optional
 
+    from nand import PhysicalAddress
+
 
 class RequestType(Enum):
     READ = auto()
@@ -34,7 +36,7 @@ class Request:
         # Request attributes
         self.type = req_type
         self.status = RequestStatus.READY
-        self.fua = False  # Force Unit Access flag
+        # self.fua = False  # TODO: implement Force Unit Access flag
         self.lba = lba
         self.physical_addr: Optional[PhysicalAddress] = None
 

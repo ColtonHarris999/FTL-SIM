@@ -43,7 +43,6 @@ class FrontendScheduler:
 
         self.ncq_size: int = ncq_size
         self.ncq: List[Request] = []
-        self.flush_events: List[Event] = []
 
         # Register event handlers
         self.event_loop.register_handler(
@@ -51,7 +50,7 @@ class FrontendScheduler:
         )
         self.event_loop.register_handler(EventType.FRONTEND_SCHEDULE, self._schedule)
         self.event_loop.register_handler(
-            EventType.CACHE_FLUSH_START, self._handle_flush_event
+            EventType.NAND_READ_COMPLETE, self._handle_nand_read_complete
         )
         self.event_loop.register_handler(
             EventType.REQUEST_COMPLETE, self._handle_completion
@@ -61,12 +60,7 @@ class FrontendScheduler:
         return len(self.ncq) < self.ncq_size
 
     def _schedule(self, _: Event) -> None:
-        if self.flush_events and not self.cache.is_busy():
-            event: Event = self.flush_events.pop(0)
-            assert isinstance(event.payload, CachePage)
-            page: CachePage = event.payload
-            self.cache.writeback(page.lpa)
-
+        print("! Running frontend scheduler")
         dirty_lbas: set[int] = set()
         for request in self.ncq:
             match request.type:
@@ -88,13 +82,17 @@ class FrontendScheduler:
                         transaction: NANDTransaction = NANDTransaction(
                             type=NANDTransactionType.READ,
                             pa=pa,
-                            completed_requests=[request],
+                            payload=request,
                         )
                         self.nand_scheduler.enqueue(transaction)
                 case RequestType.WRITE:
                     dirty_lbas.add(request.lba)
                     # TODO: check if cache has space?
-                    if request.status != RequestStatus.READY or self.cache.is_busy():
+                    if (
+                        request.status != RequestStatus.READY
+                        or self.cache.is_busy()
+                        or not self.cache.can_hold(request.lba)
+                    ):
                         continue
                     request.status = RequestStatus.IN_PROGRESS
                     self.cache.put(request)
@@ -105,9 +103,6 @@ class FrontendScheduler:
                 case _:
                     raise NotImplementedError
 
-    def _handle_flush_event(self, event: Event) -> None:
-        self.flush_events.append(event)
-
     def _handle_arrival(self, event: Event):
         assert self.has_space(), "NCQ is full"
         assert isinstance(event.payload, Request)
@@ -116,6 +111,18 @@ class FrontendScheduler:
         request.enqueue_time = self.event_loop.time_us  # TODO: replace with trace
         self.ncq.append(request)
         self._schedule(event)
+
+    def _handle_nand_read_complete(self, event: Event):
+        assert isinstance(event.payload, NANDTransaction)
+        transaction: NANDTransaction = event.payload
+        assert isinstance(transaction.payload, Request)
+        request: Request = transaction.payload
+
+        request.completion_time = self.event_loop.time_us  # TODO: replace with trace
+        request.status = RequestStatus.COMPLETED
+        self.ncq.remove(request)
+        self.sim.complete(request)
+        self._schedule(event)  # TODO: check if needed
 
     def _handle_completion(self, event: Event):
         assert isinstance(event.payload, Request)

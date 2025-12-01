@@ -29,11 +29,11 @@ if __name__ == "__main__":
     requests = [
         Request(RequestType.WRITE, 0, 1),
         Request(RequestType.WRITE, 1, 2),
-        Request(RequestType.READ, 0, 1),
+        Request(RequestType.READ, 2, 1),
         Request(RequestType.READ, 1, 2),
         Request(RequestType.WRITE, 1, 3),
-        # Request(RequestType.READ, 1, 4),
-        # Request(RequestType.READ, 2, 100),
+        Request(RequestType.READ, 1, 1000),
+        Request(RequestType.READ, 2, 100),
     ]
     # ssd.reset()
     ssd.run_simulation(requests)
