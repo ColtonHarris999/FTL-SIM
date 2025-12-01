@@ -10,11 +10,12 @@ class FlashTranslationLayer:
         self.nand = nand
         self.mapping: dict[int, PhysicalAddress] = {}
         self.counter = 0  # stub counter for physical page allocation
+        self.lbas_per_page: int = 2  # TODO: compute from NAND geometry
 
     def clear(self):
         self.mapping.clear()
 
-    def lookup(self, lpa: int) -> Optional[PhysicalAddress]:
+    def lpa_to_ppa(self, lpa: int) -> Optional[PhysicalAddress]:
         return self.mapping.get(lpa)
 
     def allocate(self, lpa: int) -> PhysicalAddress:
@@ -24,3 +25,6 @@ class FlashTranslationLayer:
         self.counter += 1
         self.mapping[lpa] = pa
         return pa
+
+    def lba_to_lpa(self, lba: int) -> int:
+        return lba // self.lbas_per_page

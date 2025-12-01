@@ -21,9 +21,7 @@ class Request:
 
     _id_counter = 0
 
-    def __init__(
-        self, req_type: RequestType, lba: int, arrival_time: float = 0.0
-    ):
+    def __init__(self, req_type: RequestType, lba: int, arrival_time: float = 0.0):
         # Assign unique ID
         self.id = Request._id_counter
         Request._id_counter += 1

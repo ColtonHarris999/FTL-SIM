@@ -6,7 +6,7 @@ from nand import NAND, NANDTransaction
 from request import Request, RequestStatus, RequestType
 
 
-class Scheduler(ABC):
+class NANDScheduler(ABC):
     """Scheduler interface"""
 
     def __init__(self, event_loop: EventLoop, nand: NAND):
@@ -22,7 +22,7 @@ class Scheduler(ABC):
         self.queue.append(req)
 
 
-class FIFOScheduler(Scheduler):
+class FIFOScheduler(NANDScheduler):
     """
     Naive FIFO scheduler
     Always schedules the oldest request in the queue
@@ -43,7 +43,7 @@ class FIFOScheduler(Scheduler):
                     self.nand.read_page(req)
 
 
-class NaiveReadScheduler(Scheduler):
+class NaiveReadScheduler(NANDScheduler):
     """
     Naive read scheduler
     Similar to FIFOScheduler but always prioritizes read requests
@@ -77,7 +77,7 @@ class NaiveReadScheduler(Scheduler):
                 self.channel.do_dma(req)
 
 
-class WriteBackScheduler(Scheduler):
+class WriteBackScheduler(NANDScheduler):
     def schedule(self, ncq: List[Request]):
         for req in self.ncq:
             if req.status != RequestStatus.READY:

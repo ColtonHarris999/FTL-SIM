@@ -1,11 +1,15 @@
-from enum import Enum, auto
+from __future__ import annotations
+
 import heapq
 import itertools
-from typing import Optional
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from typing import Callable, List, Optional
 
 
 class EventType(Enum):
     ARRIVAL = auto()
+    REQUEST_COMPLETE = auto()
 
     DMA_COMPLETE = auto()
 
@@ -14,40 +18,61 @@ class EventType(Enum):
 
     CACHE_READ_COMPLETE = auto()
     CACHE_WRITE_COMPLETE = auto()
-
     CACHE_FLUSH_START = auto()
     CACHE_FLUSH_COMPLETE = auto()
 
-    REQUEST_COMPLETE = auto()
+
+@dataclass(order=True)  # needs to be orderable for heapq
+class Event:
+    time_us: float
+    ev_type: EventType = field(compare=False)
+    seq: Optional[int] = field(compare=True, default=None)
+    payload: Optional[object] = field(compare=False, default=None)
+    canceled: bool = field(compare=False, default=False)
+    dispatched: bool = field(compare=False, default=False)
 
 
 class EventLoop:
-    """Handles event scheduling and dispatching for the SSD simulator."""
+    def __init__(self) -> None:
+        self.time_us: float = 0
+        self._ev_heap: List[Event] = []
+        self._seq: itertools.count[int] = itertools.count()
+        self.handlers: dict[EventType, Callable[[Event], None]] = {}
 
-    def __init__(self, dispatch_callback=None):
-        self.time_us = 0
-        self._ev_heap = []
-        self.seq = itertools.count()
-        self.dispatch_callback = dispatch_callback
+    def register_handler(
+        self, ev_type: EventType, handler: Callable[[Event], None]
+    ) -> None:
+        if ev_type in self.handlers:
+            raise Exception(f"Handler already registered for {ev_type}")
+        self.handlers[ev_type] = handler
 
-    def schedule_event(
-        self, time_us: float, ev_type: EventType, payload=None, callback=None
-    ):
-        print(f"Scheduling event {ev_type} at {time_us} us")
-        heapq.heappush(
-            self._ev_heap, (time_us, next(self.seq), ev_type, payload, callback)
-        )
+    def schedule_event(self, event: Event) -> None:
+        # Assign a sequence number if not already set
+        if event.seq is None:
+            event.seq = next(self._seq)
+        heapq.heappush(self._ev_heap, event)
+        print(f"Scheduled event {event.ev_type} at {event.time_us} us")
 
-    def run(self, until_us: Optional[int] = None):
+    def cancel_event(self, event: Event) -> None:
+        event.canceled = True
+        print(f"Canceled event {event.ev_type} scheduled at {event.time_us} us")
+
+    def run(self, until_us: Optional[float] = None) -> None:
         while self._ev_heap:
-            time_us, _, ev_type, payload, callback = heapq.heappop(self._ev_heap)
-            if until_us is not None and time_us > until_us:
+            event = heapq.heappop(self._ev_heap)
+            if until_us is not None and event.time_us > until_us:
+                # Stop but keep the event in the heap
+                heapq.heappush(self._ev_heap, event)
                 break
+
+            if event.canceled:
+                continue  # Skip canceled events
+
             print(
-                f"========= T={time_us}: Dispatching {ev_type} for {payload} ========="
+                f"========= T={event.time_us}: Dispatching {event.ev_type} for {event.payload} ========="
             )
-            self.time_us = time_us
-            if callback:
-                callback(ev_type, payload)
-            elif self.dispatch_callback:
-                self.dispatch_callback(ev_type, payload)
+            self.time_us = event.time_us
+            event.dispatched = True
+            handler = self.handlers.get(event.ev_type)
+            if handler:
+                handler(event)

@@ -1,13 +1,14 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from enum import Enum
-import enum
-from typing import List
+from enum import Enum, auto
+from typing import Optional
 
 from event import EventLoop, EventType
 from request import Request, RequestType
 
 
-@dataclass
+@dataclass(frozen=True)
 class PhysicalAddress:
     channel: int
     die: int
@@ -16,17 +17,17 @@ class PhysicalAddress:
     page: int
 
 
-class NANDTransactionType(enum.Enum):
-    READ = enum.auto()
-    WRITE = enum.auto()
+class NANDTransactionType(Enum):
+    READ = auto()
+    WRITE = auto()
 
 
-@dataclass
+@dataclass(frozen=True)
 class NANDTransaction:
     type: NANDTransactionType
     pa: PhysicalAddress
     completed_requests: list[Request]
-    depends_on: "NANDTransaction | None" = None
+    depends_on: Optional[NANDTransaction] = None
 
 
 # TODO allow heterogeneous geometry?
@@ -62,7 +63,7 @@ class NAND:
         # self.dma_us = dma_us
 
         # Actual NAND structure
-        self.channels: List[Channel] = [
+        self.channels: list[Channel] = [
             Channel(event_loop, dma_us) for _ in range(num_channels)
         ]
         self.dies = [Plane() for _ in range(num_channels * num_dies_per_channel)]
@@ -89,7 +90,7 @@ class NAND:
 
         # Queue DMA transfer on appropriate channel
         channel_idx = req.physical_addr.channel
-        self.channels[channel_idx].do_dma(req, callback=self._write_done_callback)
+        self.channels[channel_idx].do_dma(req)
 
     def _write_done_callback(self, req: Request):
         self.event_loop.schedule_event(
@@ -102,7 +103,7 @@ class NAND:
         # 1. Schedule NAND read complete after read_us
         # 2. On NAND read complete, schedule DMA complete after dma_us
         # 3. On DMA complete, invoke req_complete event
-        self.dies[req.physical_addr.die].busy = True
+        # self.dies[req.physical_addr.die].busy = True
 
         self.event_loop.schedule_event(
             self.event_loop.time_us + self.read_us,
@@ -121,7 +122,7 @@ class NAND:
 class Plane:
     def __init__(self, blocks_per_plane=1024):
         self.busy: bool = False
-        self.blocks: List[Block] = [Block() for i in range(blocks_per_plane)]
+        self.blocks: list[Block] = [Block() for i in range(blocks_per_plane)]
         self.next_free_block: int = 0
 
 
@@ -155,7 +156,7 @@ class Channel:
     def __init__(self, event_loop: EventLoop, dma_us: int):
         self.event_loop = event_loop
 
-        self.dma_queue: List[Request] = []
+        self.dma_queue: list[Request] = []
         self.busy: bool = False
 
         self.dma_us = dma_us
@@ -186,6 +187,7 @@ class Channel:
             )
         elif req.type == RequestType.WRITE:
             # TODO call NAND program callback
+            pass
 
         # Start next DMA if any
         if self.dma_queue:
