@@ -8,7 +8,7 @@ from typing import Callable, List, Optional
 
 
 class EventType(Enum):
-    ARRIVAL = auto()
+    REQUEST_ARRIVAL = auto()
     REQUEST_COMPLETE = auto()
 
     DMA_COMPLETE = auto()
@@ -20,6 +20,9 @@ class EventType(Enum):
     CACHE_WRITE_COMPLETE = auto()
     CACHE_FLUSH_START = auto()
     CACHE_FLUSH_COMPLETE = auto()
+
+    FRONTEND_SCHEDULE = auto()
+    NAND_SCHEDULE = auto()
 
 
 @dataclass(order=True)  # needs to be orderable for heapq

@@ -1,7 +1,12 @@
-from enum import Enum, auto
-from typing import Optional
+from __future__ import annotations
 
-from nand import PhysicalAddress
+from enum import Enum, auto
+from typing import TYPE_CHECKING
+
+from event import Event
+
+if TYPE_CHECKING:
+    from typing import Optional
 
 
 class RequestType(Enum):
@@ -32,6 +37,9 @@ class Request:
         self.fua = False  # Force Unit Access flag
         self.lba = lba
         self.physical_addr: Optional[PhysicalAddress] = None
+
+        # TODO: replace timing info with trace of events
+        self.trace: list[Event] = []
 
         # Timing info
         self.arrival_time = arrival_time

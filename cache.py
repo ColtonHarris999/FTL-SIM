@@ -46,8 +46,8 @@ class WriteCache:
         event_loop: EventLoop,
         ftl: FlashTranslationLayer,
         scheduler: NANDScheduler,
-        num_pages: int = 4,
-    ):
+        num_pages: int = 2,
+    ) -> None:
         self.event_loop: EventLoop = event_loop
         self.ftl: FlashTranslationLayer = ftl
         self.scheduler: NANDScheduler = scheduler
@@ -56,8 +56,6 @@ class WriteCache:
         self.cache: dict[int, CachePage] = {}
         self.cached_lbas: set[int] = set()
         self.busy: bool = False
-
-        self.missed_writeback_event: Optional[Event] = None
 
         # Timing parameters
         self.write_us: float = 10
@@ -70,9 +68,6 @@ class WriteCache:
         )
         self.event_loop.register_handler(
             EventType.CACHE_WRITE_COMPLETE, self._handle_cache_write_complete
-        )
-        self.event_loop.register_handler(
-            EventType.CACHE_FLUSH_START, self._handle_writeback_start
         )
         self.event_loop.register_handler(
             EventType.NAND_WRITE_COMPLETE, self._handle_writeback_complete
@@ -130,6 +125,15 @@ class WriteCache:
         )
         self.event_loop.schedule_event(new_event)
 
+        # TODO: check
+        # Cache is ready, run frontend scheduler
+        self.event_loop.schedule_event(
+            Event(
+                time_us=self.event_loop.time_us,
+                ev_type=EventType.FRONTEND_SCHEDULE,
+            )
+        )
+
     def _handle_cache_write_complete(self, event: Event) -> None:
         assert isinstance(event.payload, Request)
         request: Request = event.payload
@@ -144,6 +148,15 @@ class WriteCache:
                 payload=request,
             )
             self.event_loop.schedule_event(new_event)
+
+        # TODO: check
+        # Cache is ready, run frontend scheduler
+        self.event_loop.schedule_event(
+            Event(
+                time_us=self.event_loop.time_us,
+                ev_type=EventType.FRONTEND_SCHEDULE,
+            )
+        )
 
         # coalesce request into cache page
         self.cached_lbas.add(request.lba)
@@ -162,25 +175,21 @@ class WriteCache:
         )
         self.event_loop.schedule_event(new_event)
 
-    def _handle_writeback_start(self, event: Event) -> None:
+    def writeback(self, lpa: int) -> None:
         """
         Handler for starting writeback/flush after coalesce delay.
         Issue NAND write via scheduler that eventually completes all currently coalesced requests. If not all subpages are written at least once,
         issue NAND read first.
         """
-        assert isinstance(event.payload, CachePage)
-        page: CachePage = event.payload
 
-        # TODO: what if cache is busy?
-        if self.busy:
-            self.missed_writeback_events.append(event)
-            return
+        assert not self.busy, "Cache is busy"
+        assert lpa in self.cache, "LPA not in cache"
 
-        page.status = CachePageState.FLUSHING
+        page: CachePage = self.cache[lpa]
 
         # issue NAND read first if not all LOGICAL pages written
         read_transaction: Optional[NANDTransaction] = None
-        if len(set([req.lba for req in page.requests])) < self.lbas_per_page:
+        if len(set([req.lba for req in page.requests])) < self.ftl.lbas_per_page:
             pa: Optional[PhysicalAddress] = self.ftl.lpa_to_ppa(page.lpa)
             assert pa is not None
             read_transaction = NANDTransaction(
@@ -198,7 +207,6 @@ class WriteCache:
             depends_on=read_transaction,
         )
         self.scheduler.enqueue(transaction)
-
         self.scheduler.schedule()
 
     def _handle_writeback_complete(self, event: Event):
