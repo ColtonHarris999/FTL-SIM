@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum, auto
-from typing import TYPE_CHECKING
-
-from event import Event
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -23,12 +21,29 @@ class RequestStatus(Enum):
     COMPLETED = auto()
 
 
+class TraceEvent(Enum):
+    READY = auto()
+    ARRIVAL = auto()
+    START = auto()
+    COMPLETION = auto()
+
+    CACHE_READ_START = auto()
+    CACHE_READ_COMPLETE = auto()
+    CACHE_WRITE_START = auto()
+    CACHE_WRITE_COMPLETE = auto()
+
+    NAND_READ_START = auto()
+    NAND_READ_COMPLETE = auto()
+    NAND_WRITE_START = auto()
+    NAND_WRITE_COMPLETE = auto()
+
+
 class Request:
     """Represents an I/O request"""
 
     _id_counter = 0
 
-    def __init__(self, req_type: RequestType, lba: int, arrival_time: float = 0.0):
+    def __init__(self, req_type: RequestType, lba: int, ready_time: float = 0.0):
         # Assign unique ID
         self.id = Request._id_counter
         Request._id_counter += 1
@@ -39,51 +54,17 @@ class Request:
         # self.fua = False  # TODO: implement Force Unit Access flag
         self.lba = lba
         self.physical_addr: Optional[PhysicalAddress] = None
+        self.ready_time: float = ready_time
+        self.trace: dict[TraceEvent, float] = {TraceEvent.READY: ready_time}
+        self.callback: Optional[Callable[[Request], None]] = None
 
-        # TODO: replace timing info with trace of events
-        self.trace: list[Event] = []
+    def __str__(self) -> str:
+        return f"Req[{self.id}, {self.type.name} #{self.lba}]"
 
-        # Timing info
-        self.arrival_time = arrival_time
-        self.enqueue_time: Optional[float] = None  # When it was enqueued in the NCQ
-        self.start_time: Optional[float] = None  # When processing begins
-        self.completion_time: Optional[float] = None  # When processing completes
-        self.device_latency = 0.0  # Actual flash operation time
-        self.ftl_latency = 0.0  # FTL lookup/mapping time
-        self.gc_latency = 0.0  # Garbage collection time (if triggered)
-
-    def __str__(self):
-        return f"(Request {self.id})"
+    def trace_str(self) -> str:
+        return "  →  ".join(
+            f"{event.name} @ {time} us" for event, time in self.trace.items()
+        )
 
     def get_response_time(self):
-        """Total response time: arrival to completion"""
-        if self.completion_time is not None:
-            return self.completion_time - self.arrival_time
-        return None
-
-    def get_queue_wait_time(self):
-        """Time spent waiting in queue"""
-        if self.start_time is not None:
-            return self.start_time - self.arrival_time
-        return None
-
-    def get_service_time(self):
-        """Time spent being serviced (not waiting in queue)"""
-        if self.completion_time is not None and self.start_time is not None:
-            return self.completion_time - self.start_time
-        return None
-
-    def get_latency_breakdown(self):
-        """Get detailed latency breakdown"""
-        return {
-            "arrival_time": self.arrival_time,
-            "enqueue_time": self.enqueue_time,
-            "start_time": self.start_time,
-            "completion_time": self.completion_time,
-            # "queue_wait": self.get_queue_wait_time(),
-            "service_time": self.get_service_time(),
-            # "ftl_latency": self.ftl_latency,
-            # "device_latency": self.device_latency,
-            # "gc_latency": self.gc_latency,
-            "response_time": self.get_response_time(),
-        }
+        return self.trace[TraceEvent.COMPLETION] - self.trace[TraceEvent.ARRIVAL]

@@ -26,15 +26,20 @@ if __name__ == "__main__":
     # ssd.run_simulation(requests)
 
     print("=== Example 4: Read/write mix ===")
-    requests = [
-        Request(RequestType.WRITE, 0, 1),
-        Request(RequestType.WRITE, 1, 2),
-        Request(RequestType.READ, 2, 1),
-        Request(RequestType.READ, 1, 2),
-        Request(RequestType.WRITE, 1, 3),
-        Request(RequestType.READ, 1, 1000),
-        Request(RequestType.READ, 2, 100),
-    ]
-    # ssd.reset()
+    requests = (
+        [
+            Request(RequestType.WRITE, 0, 1),
+            Request(RequestType.WRITE, 1, 2),
+            Request(RequestType.WRITE, 1, 3),
+            Request(RequestType.READ, 2, 1),
+            Request(RequestType.READ, 1, 2),
+            Request(RequestType.WRITE, 1, 3),
+            Request(RequestType.READ, 1, 2000),
+            Request(RequestType.WRITE, 1, 2099),
+            Request(RequestType.READ, 1, 2100),
+        ]
+        + [Request(RequestType.WRITE, i % 4, i * 10) for i in range(8)]
+        + [Request(RequestType.READ, i % 4, i * 10 + 5) for i in range(8)]
+    )
     ssd.run_simulation(requests)
     ssd.print_statistics()

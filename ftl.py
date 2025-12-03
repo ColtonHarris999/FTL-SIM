@@ -10,7 +10,7 @@ class FlashTranslationLayer:
         self.nand = nand
         self.mapping: dict[int, PhysicalAddress] = {}
         self.counter = 0  # stub counter for physical page allocation
-        self.lbas_per_page: int = 2  # TODO: compute from NAND geometry
+        self.lbas_per_page: int = 4  # TODO: compute from NAND geometry
 
     def clear(self):
         self.mapping.clear()

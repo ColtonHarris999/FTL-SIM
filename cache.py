@@ -1,12 +1,12 @@
 import enum
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 from event import Event, EventLoop, EventType
 from ftl import FlashTranslationLayer
 from nand import NANDTransaction, NANDTransactionType, PhysicalAddress
 from nand_scheduler import NANDScheduler
-from request import Request
+from request import Request, TraceEvent
 
 """
 Write cache buffers and potentially coalesces/merges writes before flushing to NAND. It is logically indexed and operates on physical page size. If the physical page size is larger than the logical page size, multiple LBAs map to the same (cache) page which is addressed by an LPA (logical page address). The cache serializes all accesses and can only handle one request at a time.
@@ -28,19 +28,11 @@ TODO: also start writeback after threshold reached?
 """
 
 
-class CachePageState(enum.Enum):
-    DIRTY = enum.auto()
-    FLUSH_SCHEDULED = enum.auto()
-    FLUSHING = enum.auto()
-    # FLUSHED = enum.auto()
-
-
 @dataclass
 class CachePage:
     lpa: int
-    status: CachePageState = CachePageState.DIRTY
     lbas: set[int] = field(default_factory=set)
-    latest_flush_event: Optional[Event] = None
+    num_outstanding_flushes: int = 0
 
 
 class WriteCache:
@@ -62,51 +54,44 @@ class WriteCache:
         # Timing parameters
         self.write_us: float = 10
         self.read_us: float = 10
-        self.writeback_delay: float = 500  # timeframe for coalescing before writeback
-
-        # Register event handlers
-        self.event_loop.register_handler(
-            EventType.CACHE_READ_COMPLETE, self._handle_cache_read_complete
-        )
-        self.event_loop.register_handler(
-            EventType.CACHE_WRITE_COMPLETE, self._handle_cache_write_complete
-        )
-        self.event_loop.register_handler(
-            EventType.CACHE_FLUSH_START, self._handle_writeback_start
-        )
-        self.event_loop.register_handler(
-            EventType.NAND_WRITE_COMPLETE, self._handle_writeback_complete
-        )
-
-    def is_busy(self) -> bool:
-        return self.busy
+        self.flush_delay: float = 500  # timeframe for coalescing before writeback
 
     def contains(self, lba: int) -> bool:
         lpa: int = self.ftl.lba_to_lpa(lba)
         return lpa in self.cache and lba in self.cache[lpa].lbas
 
-    def can_hold(self, lba: int) -> bool:
-        lpa: int = self.ftl.lba_to_lpa(lba)
-        return lpa in self.cache or len(self.cache) < self.num_pages
-
-    def get(self, request: Request) -> None:
-        print("! Reading from cache")
-        assert not self.busy, "Cache is busy"
+    def get(self, request: Request) -> bool:
+        """
+        Attempt to read request from cache. Returns True if read is scheduled, False otherwise. Caller must check if LBA is in cache first.
+        """
         assert self.contains(request.lba), "LBA not in cache"
+
+        if self.busy:
+            return False
+
+        print(f"! Reading {request} from cache")
+        request.trace[TraceEvent.CACHE_READ_START] = self.event_loop.time_us
 
         self.busy = True
 
         event: Event = Event(
             time_us=self.event_loop.time_us + self.read_us,
-            ev_type=EventType.CACHE_READ_COMPLETE,
+            description="CACHE_READ_COMPLETE",
             payload=request,
+            callback=self._handle_cache_read_complete,
         )
         self.event_loop.schedule_event(event)
+        return True
 
-    def put(self, request: Request) -> None:
-        print("! Writing to cache")
-        assert not self.busy, "Cache is busy"
-        assert self.can_hold(request.lba), "Cache is full"
+    def put(self, request: Request) -> bool:
+        """
+        Attempt to write request to cache. Returns True if write is scheduled, False otherwise. A request is not scheduled if the cache is busy or there is insufficient space.
+        """
+        if self.busy or not self._can_hold(request.lba):
+            return False
+
+        print(f"! Writing {request} to cache")
+        request.trace[TraceEvent.CACHE_WRITE_START] = self.event_loop.time_us
 
         self.busy = True
 
@@ -117,83 +102,65 @@ class WriteCache:
         page: CachePage = self.cache[lpa]
 
         # cancel scheduled flush if still possible
-        if page.status == CachePageState.FLUSH_SCHEDULED:
-            assert page.latest_flush_event is not None
-            self.event_loop.cancel_event(page.latest_flush_event)
+        # if page.status == CachePageState.FLUSH_SCHEDULED:
+        #     assert page.latest_flush_event is not None
+        #     self.event_loop.cancel_event(page.latest_flush_event)
+        #     page.num_scheduled_flush_events -= 1
 
-        page.status = CachePageState.DIRTY
+        # page.status = CachePageState.DIRTY
+        page.num_outstanding_flushes += 1
 
         event: Event = Event(
             time_us=self.event_loop.time_us + self.write_us,
-            ev_type=EventType.CACHE_WRITE_COMPLETE,
+            description="CACHE_WRITE_COMPLETE",
             payload=request,
+            callback=self._handle_cache_write_complete,
         )
         self.event_loop.schedule_event(event)
+        return True
 
-        # TODO: cancel previous flush event and reschedule?
+    def _can_hold(self, lba: int) -> bool:
+        lpa: int = self.ftl.lba_to_lpa(lba)
+        return lpa in self.cache or len(self.cache) < self.num_pages
 
     def _handle_cache_read_complete(self, event: Event) -> None:
         assert isinstance(event.payload, Request)
         request: Request = event.payload
 
+        request.trace[TraceEvent.CACHE_READ_COMPLETE] = self.event_loop.time_us
+
         self.busy = False
 
-        # complete read request to host
-        new_event: Event = Event(
-            time_us=self.event_loop.time_us,
-            ev_type=EventType.REQUEST_COMPLETE,
-            payload=request,
-        )
-        self.event_loop.schedule_event(new_event)
-
-        # TODO: check
-        # Cache is ready, run frontend scheduler
-        # self.event_loop.schedule_event(
-        #     Event(
-        #         time_us=self.event_loop.time_us,
-        #         ev_type=EventType.FRONTEND_SCHEDULE,
-        #     )
-        # )
+        assert request.callback is not None
+        request.callback(request)
 
     def _handle_cache_write_complete(self, event: Event) -> None:
         assert isinstance(event.payload, Request)
         request: Request = event.payload
 
+        request.trace[TraceEvent.CACHE_WRITE_COMPLETE] = self.event_loop.time_us
+
         self.busy = False
-
-        # complete write request to host
-        new_event: Event = Event(
-            time_us=self.event_loop.time_us,
-            ev_type=EventType.REQUEST_COMPLETE,
-            payload=request,
-        )
-        self.event_loop.schedule_event(new_event)
-
-        # TODO: check
-        # Cache is ready, run frontend scheduler
-        self.event_loop.schedule_event(
-            Event(
-                time_us=self.event_loop.time_us,
-                ev_type=EventType.FRONTEND_SCHEDULE,
-            )
-        )
 
         # coalesce LBA into cache page
         lpa: int = self.ftl.lba_to_lpa(request.lba)
         page: CachePage = self.cache[lpa]
         page.lbas.add(request.lba)
 
-        # schedule writeback after coalesce delay
-        page.status = CachePageState.FLUSH_SCHEDULED
-        new_event: Event = Event(
-            time_us=self.event_loop.time_us + self.writeback_delay,
-            ev_type=EventType.CACHE_FLUSH_START,
-            payload=page,
+        # schedule flush after coalesce delay
+        self.event_loop.schedule_event(
+            Event(
+                time_us=self.event_loop.time_us + self.flush_delay,
+                description="CACHE_FLUSH_START",
+                payload=page,
+                callback=self._handle_flush_start,
+            )
         )
-        self.event_loop.schedule_event(new_event)
-        page.latest_flush_event = new_event
 
-    def _handle_writeback_start(self, event: Event) -> None:
+        assert request.callback is not None
+        request.callback(request)
+
+    def _handle_flush_start(self, event: Event) -> None:
         """
         Handler for starting writeback/flush after coalesce delay.
         Issue NAND write via scheduler that eventually completes all currently coalesced requests. If not all subpages are written at least once,
@@ -202,39 +169,56 @@ class WriteCache:
         assert isinstance(event.payload, CachePage)
         page: CachePage = event.payload
 
-        assert not self.busy, "Cache is busy"
-        assert page.lpa in self.cache, "LPA not in cache"
+        page.num_outstanding_flushes -= 1
+        if page.num_outstanding_flushes > 0:
+            return  # another flush already scheduled
 
-        page.status = CachePageState.FLUSHING
-
-        # TODO: separate read and write transactions
         # issue NAND read first if not all LOGICAL pages written
-        # read_transaction: Optional[NANDTransaction] = None
-        # if len(page.lbas) < self.ftl.lbas_per_page:
-        #     pa: Optional[PhysicalAddress] = self.ftl.lpa_to_ppa(page.lpa)
-        #     assert pa is not None
-        #     read_transaction = NANDTransaction(
-        #         type=NANDTransactionType.READ,
-        #         pa=pa,
-        #     )
-        #     self.nand_scheduler.enqueue(read_transaction)
+        if len(page.lbas) < self.ftl.lbas_per_page:
+            pa: Optional[PhysicalAddress] = self.ftl.lpa_to_ppa(page.lpa)
+            assert pa is not None
+            transaction: NANDTransaction = NANDTransaction(
+                type=NANDTransactionType.READ,
+                pa=pa,
+                payload=page,
+                callback=self._handle_flush_read_complete,
+            )
+            self.nand_scheduler.submit(transaction)
+        else:
+            # all logical pages written, directly issue NAND write
+            self._flush_write_start(page)
 
+    def _handle_flush_read_complete(self, transaction: NANDTransaction) -> None:
+        assert isinstance(transaction.payload, CachePage)
+        page: CachePage = transaction.payload
+
+        # mark all LBAs belonging to this page as cached
+        page.lbas.update(
+            range(
+                page.lpa * self.ftl.lbas_per_page,
+                (page.lpa + 1) * self.ftl.lbas_per_page,
+            )
+        )
+
+        if page.num_outstanding_flushes == 0:
+            self._flush_write_start(page)
+
+    def _flush_write_start(self, page: CachePage) -> None:
         # allocate physical address and issue NAND write
-        transaction = NANDTransaction(
+        write_transaction: NANDTransaction = NANDTransaction(
             type=NANDTransactionType.WRITE,
             pa=self.ftl.allocate(page.lpa),
-            # depends_on=read_transaction,
             payload=page,
+            callback=self._handle_flush_complete,
         )
-        self.nand_scheduler.enqueue(transaction)
+        self.nand_scheduler.submit(write_transaction)
 
-    def _handle_writeback_complete(self, event: Event):
-        assert isinstance(event.payload, NANDTransaction)
-        assert isinstance(event.payload.payload, CachePage)
-        page: CachePage = event.payload.payload
+    def _handle_flush_complete(self, transaction: NANDTransaction) -> None:
+        assert isinstance(transaction.payload, CachePage)
+        page: CachePage = transaction.payload
 
         # TODO: delay eviction if cache page is currently being read
         # there could be multiple flush transactions in the system
         # -> only evict if latest one completes and cache is not dirty again
-        if page.status == CachePageState.FLUSHING and event == page.latest_flush_event:
+        if page.num_outstanding_flushes == 0:
             del self.cache[page.lpa]

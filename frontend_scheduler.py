@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Optional
 
-from cache import CachePage, WriteCache
-from event import Event, EventLoop, EventType
+from cache import WriteCache
+from event import EventLoop
 from ftl import FlashTranslationLayer
 from nand import NANDTransaction, NANDTransactionType, PhysicalAddress
 from nand_scheduler import NANDScheduler
-from request import Request, RequestStatus, RequestType
+from request import Request, RequestStatus, RequestType, TraceEvent
 
 if TYPE_CHECKING:
     from simulator import SSDSimulator
@@ -23,6 +23,8 @@ Request types and their handling:
 - WAW: writes to the same LBA must be issued to the cache in order
 - WAR: read must be issued (= assign PA) before later writes to the same LBA
 """
+
+# TODO: allow multiple sectors per request?
 
 
 class FrontendScheduler:
@@ -44,23 +46,13 @@ class FrontendScheduler:
         self.ncq_size: int = ncq_size
         self.ncq: List[Request] = []
 
-        # Register event handlers
-        self.event_loop.register_handler(
-            EventType.REQUEST_ARRIVAL, self._handle_arrival
-        )
-        self.event_loop.register_handler(EventType.FRONTEND_SCHEDULE, self._schedule)
-        self.event_loop.register_handler(
-            EventType.NAND_READ_COMPLETE, self._handle_nand_read_complete
-        )
-        self.event_loop.register_handler(
-            EventType.REQUEST_COMPLETE, self._handle_completion
-        )
+    def submit(self, request: Request) -> None:
+        assert len(self.ncq) < self.ncq_size, "NCQ is full"
+        request.trace[TraceEvent.ARRIVAL] = self.event_loop.time_us
+        self.ncq.append(request)
 
-    def has_space(self) -> bool:
-        return len(self.ncq) < self.ncq_size
-
-    def _schedule(self, _: Event) -> None:
-        print("! Running frontend scheduler")
+    def try_dispatch(self) -> None:
+        print("Running frontend scheduler...")
         dirty_lbas: set[int] = set()
         for request in self.ncq:
             match request.type:
@@ -71,10 +63,9 @@ class FrontendScheduler:
                     ):
                         continue
                     if self.cache.contains(request.lba):
-                        if self.cache.is_busy():
-                            continue
-                        request.status = RequestStatus.IN_PROGRESS
-                        self.cache.get(request)
+                        request.callback = self._handle_cache_read_complete
+                        if self.cache.get(request):
+                            request.status = RequestStatus.IN_PROGRESS
                     else:
                         request.status = RequestStatus.IN_PROGRESS
                         pa: Optional[PhysicalAddress] = self.ftl.lpa_to_ppa(request.lba)
@@ -83,19 +74,15 @@ class FrontendScheduler:
                             type=NANDTransactionType.READ,
                             pa=pa,
                             payload=request,
+                            callback=self._handle_nand_read_complete,
                         )
-                        self.nand_scheduler.enqueue(transaction)
+                        self.nand_scheduler.submit(transaction)
                 case RequestType.WRITE:
                     dirty_lbas.add(request.lba)
-                    # TODO: check if cache has space?
-                    if (
-                        request.status != RequestStatus.READY
-                        or self.cache.is_busy()
-                        or not self.cache.can_hold(request.lba)
-                    ):
-                        continue
-                    request.status = RequestStatus.IN_PROGRESS
-                    self.cache.put(request)
+                    if request.status == RequestStatus.READY:
+                        request.callback = self._handle_cache_write_complete
+                        if self.cache.put(request):
+                            request.status = RequestStatus.IN_PROGRESS
                 case RequestType.FLUSH:
                     # TODO: implement flush handling
                     # probably just stop issuing new requests until NAND scheduler queue is empty
@@ -103,33 +90,26 @@ class FrontendScheduler:
                 case _:
                     raise NotImplementedError
 
-    def _handle_arrival(self, event: Event):
-        assert self.has_space(), "NCQ is full"
-        assert isinstance(event.payload, Request)
-        request: Request = event.payload
-
-        request.enqueue_time = self.event_loop.time_us  # TODO: replace with trace
-        self.ncq.append(request)
-        self._schedule(event)
-
-    def _handle_nand_read_complete(self, event: Event):
-        assert isinstance(event.payload, NANDTransaction)
-        transaction: NANDTransaction = event.payload
+    def _handle_nand_read_complete(self, transaction: NANDTransaction) -> None:
         assert isinstance(transaction.payload, Request)
         request: Request = transaction.payload
 
-        request.completion_time = self.event_loop.time_us  # TODO: replace with trace
+        request.trace[TraceEvent.NAND_READ_START] = transaction.start_time
+        request.trace[TraceEvent.NAND_READ_COMPLETE] = self.event_loop.time_us
+        request.trace[TraceEvent.COMPLETION] = self.event_loop.time_us
         request.status = RequestStatus.COMPLETED
         self.ncq.remove(request)
         self.sim.complete(request)
-        self._schedule(event)  # TODO: check if needed
 
-    def _handle_completion(self, event: Event):
-        assert isinstance(event.payload, Request)
-        request: Request = event.payload
-
-        request.completion_time = self.event_loop.time_us  # TODO: replace with trace
+    def _handle_cache_read_complete(self, request: Request) -> None:
+        request.trace[TraceEvent.COMPLETION] = self.event_loop.time_us
         request.status = RequestStatus.COMPLETED
         self.ncq.remove(request)
         self.sim.complete(request)
-        self._schedule(event)  # TODO: check if needed
+
+    def _handle_cache_write_complete(self, request: Request) -> None:
+        # TODO: what if FUA flag is set?
+        request.trace[TraceEvent.COMPLETION] = self.event_loop.time_us
+        request.status = RequestStatus.COMPLETED
+        self.ncq.remove(request)
+        self.sim.complete(request)

@@ -3,44 +3,29 @@ from __future__ import annotations
 import heapq
 import itertools
 from dataclasses import dataclass, field
-from enum import Enum, auto
 from typing import Callable, List, Optional
-
-
-class EventType(Enum):
-    REQUEST_ARRIVAL = auto()
-    REQUEST_COMPLETE = auto()
-
-    DMA_COMPLETE = auto()
-
-    NAND_READ_COMPLETE = auto()
-    NAND_WRITE_COMPLETE = auto()
-
-    CACHE_READ_COMPLETE = auto()
-    CACHE_WRITE_COMPLETE = auto()
-    CACHE_FLUSH_START = auto()
-    CACHE_FLUSH_COMPLETE = auto()
-
-    FRONTEND_SCHEDULE = auto()
-    NAND_SCHEDULE = auto()
 
 
 @dataclass(order=True)  # needs to be orderable for heapq
 class Event:
     time_us: float
-    ev_type: EventType = field(compare=False)
+    callback: Callable[[Event], None] = field(compare=False)
     seq: Optional[int] = field(compare=True, default=None)
-    payload: Optional[object] = field(compare=False, default=None)
     canceled: bool = field(compare=False, default=False)
-    dispatched: bool = field(compare=False, default=False)
+    description: str = field(compare=False, default="")
+    payload: Optional[object] = field(compare=False, default=None)
 
 
 class EventLoop:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        timestep_handler: Optional[Callable[[Event], None]] = None,
+    ) -> None:
         self.time_us: float = 0
         self._ev_heap: List[Event] = []
         self._seq: itertools.count[int] = itertools.count()
         self.handlers: dict[EventType, Callable[[Event], None]] = {}
+        self.timestep_handler: Optional[Callable[[Event], None]] = timestep_handler
 
     def register_handler(
         self, ev_type: EventType, handler: Callable[[Event], None]
@@ -50,16 +35,16 @@ class EventLoop:
         self.handlers[ev_type] = handler
 
     def schedule_event(self, event: Event) -> None:
-        # Assign a sequence number if not already set
-        if event.seq is None:
-            event.seq = next(self._seq)
+        event.seq = next(self._seq)
         heapq.heappush(self._ev_heap, event)
-        print(f"+ Scheduled {event.ev_type} (seq={event.seq}) at t={event.time_us} us")
+        print(
+            f'+ Scheduled "{event.description}" (seq={event.seq}) at t={event.time_us} us'
+        )
 
     def cancel_event(self, event: Event) -> None:
         event.canceled = True
         print(
-            f"- Canceled {event.ev_type} (seq={event.seq}) scheduled at t={event.time_us} us"
+            f'- Canceled "{event.description}" (seq={event.seq}) scheduled at t={event.time_us} us'
         )
 
     def run(self, until_us: Optional[float] = None) -> None:
@@ -71,15 +56,15 @@ class EventLoop:
                 break
 
             if event.canceled:
-                continue  # Skip canceled events
+                continue
 
             print(50 * "-")
             print(
-                f"t={event.time_us} us: Dispatching {event.ev_type} (seq={event.seq}) with payload={event.payload}"
+                f"t={event.time_us} us: Dispatching {event.description} (seq={event.seq}) with payload={event.payload}"
             )
 
             self.time_us = event.time_us
-            event.dispatched = True
-            handler = self.handlers.get(event.ev_type)
-            if handler:
-                handler(event)
+
+            event.callback(event)
+            if self.timestep_handler:
+                self.timestep_handler(event)
