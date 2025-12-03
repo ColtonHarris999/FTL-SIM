@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List
 
 from event import Event, EventLoop
-from nand import NANDTransaction, NANDTransactionType
+from nand import NAND, NANDTransaction, NANDTransactionType
 
 
 class NANDScheduler:
@@ -11,48 +11,38 @@ class NANDScheduler:
 
 
 class MockScheduler(NANDScheduler):
-    def __init__(self, event_loop: EventLoop) -> None:
+    def __init__(self, event_loop: EventLoop, nand: NAND) -> None:
         self.event_loop: EventLoop = event_loop
+        self.nand: NAND = nand
+
         self.queue: List[NANDTransaction] = []
-        self.busy: bool = False
 
         self.num_reads: int = 0
         self.num_writes: int = 0
 
     def submit(self, transaction: NANDTransaction) -> None:
-        print(f"! Issuing {transaction} to NAND scheduler")
+        print(f"! Submitting {transaction} to NAND scheduler")
         self.queue.append(transaction)
 
     def try_dispatch(self) -> None:
-        if not self.queue or self.busy:
+        print("Running NAND scheduler...")
+        if not self.queue:
             return
 
-        transaction: NANDTransaction = self.queue.pop(0)
-        transaction.start_time = self.event_loop.time_us
-
-        match transaction.type:
-            case NANDTransactionType.WRITE:
-                self.num_writes += 1
-                self.event_loop.schedule_event(
-                    Event(
-                        time_us=self.event_loop.time_us + 500,
-                        description="NAND_WRITE_COMPLETE",
-                        payload=transaction,
-                        callback=self._handle_nand_write_complete,
-                    )
-                )
-            case NANDTransactionType.READ:
-                self.num_reads += 1
-                self.event_loop.schedule_event(
-                    Event(
-                        time_us=self.event_loop.time_us + 100,
-                        description="NAND_READ_COMPLETE",
-                        payload=transaction,
-                        callback=self._handle_nand_read_complete,
-                    )
-                )
-            case _:
-                raise NotImplementedError
+        transaction: NANDTransaction = self.queue[0]
+        if self.nand.is_ready(transaction.pa):
+            print(f"! Dispatching {transaction} to NAND")
+            self.queue.pop(0)
+            transaction.start_time = self.event_loop.time_us
+            match transaction.type:
+                case NANDTransactionType.WRITE:
+                    self.nand.write_page(transaction)
+                case NANDTransactionType.READ:
+                    self.nand.read_page(transaction)
+                case _:
+                    raise NotImplementedError
+        else:
+            print(f"! NAND not ready for {transaction}")
 
     def _handle_nand_read_complete(self, event: Event) -> None:
         assert isinstance(event.payload, NANDTransaction)

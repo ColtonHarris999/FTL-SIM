@@ -1,8 +1,7 @@
-import enum
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Optional
 
-from event import Event, EventLoop, EventType
+from event import Event, EventLoop
 from ftl import FlashTranslationLayer
 from nand import NANDTransaction, NANDTransactionType, PhysicalAddress
 from nand_scheduler import NANDScheduler
@@ -41,7 +40,7 @@ class WriteCache:
         event_loop: EventLoop,
         ftl: FlashTranslationLayer,
         scheduler: NANDScheduler,
-        num_pages: int = 2,
+        num_pages: int = 1,
     ) -> None:
         self.event_loop: EventLoop = event_loop
         self.ftl: FlashTranslationLayer = ftl
@@ -95,19 +94,10 @@ class WriteCache:
 
         self.busy = True
 
-        # mark cache page as dirty
         lpa: int = self.ftl.lba_to_lpa(request.lba)
         if lpa not in self.cache:
             self.cache[lpa] = CachePage(lpa)
         page: CachePage = self.cache[lpa]
-
-        # cancel scheduled flush if still possible
-        # if page.status == CachePageState.FLUSH_SCHEDULED:
-        #     assert page.latest_flush_event is not None
-        #     self.event_loop.cancel_event(page.latest_flush_event)
-        #     page.num_scheduled_flush_events -= 1
-
-        # page.status = CachePageState.DIRTY
         page.num_outstanding_flushes += 1
 
         event: Event = Event(

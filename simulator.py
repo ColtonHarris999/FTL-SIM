@@ -1,5 +1,5 @@
 from cache import WriteCache
-from event import Event, EventLoop, EventType
+from event import Event, EventLoop
 from frontend_scheduler import FrontendScheduler
 from ftl import FlashTranslationLayer
 from nand import NAND
@@ -14,7 +14,7 @@ class SSDSimulator:
         # Logical components
         self.nand = NAND(self.event_loop)
         self.ftl = FlashTranslationLayer(self.nand)
-        self.nand_scheduler = MockScheduler(self.event_loop)
+        self.nand_scheduler = MockScheduler(self.event_loop, self.nand)
         self.write_cache = WriteCache(self.event_loop, self.ftl, self.nand_scheduler)
         self.frontend_scheduler = FrontendScheduler(
             self.event_loop, self, self.write_cache, self.ftl, self.nand_scheduler
@@ -23,10 +23,6 @@ class SSDSimulator:
         # Request bookkeeping
         self.requests: list[Request] = []
         self.completed_requests: list[Request] = []
-
-        self.event_loop.register_handler(
-            EventType.REQUEST_ARRIVAL, self._handle_arrival
-        )
 
     def complete(self, request: Request):
         """Handle completion of a request."""
@@ -108,7 +104,7 @@ class SSDSimulator:
         cache_hit_rate = (
             (cache_hits / total_read_requests) * 100 if total_read_requests > 0 else 0
         )
-        print(f"# reads: {self.nand_scheduler.num_reads}")
+        print(f"# reads: {self.nand.num_reads}")
         print(f"Cache hit rate: {cache_hit_rate:.2f}%")
 
         # Calculate write amplification
@@ -116,13 +112,9 @@ class SSDSimulator:
             1 for req in self.completed_requests if req.type == RequestType.WRITE
         )
         write_amplification = (
-            (
-                self.nand_scheduler.num_writes
-                * self.ftl.lbas_per_page
-                / total_logical_writes
-            )
+            (self.nand.num_writes * self.ftl.lbas_per_page / total_logical_writes)
             if total_logical_writes > 0
             else 0
         )
-        print(f"# writes: {self.nand_scheduler.num_writes}")
+        print(f"# writes: {self.nand.num_writes}")
         print(f"Write amplification factor: {write_amplification:.2f}")

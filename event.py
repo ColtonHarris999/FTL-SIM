@@ -24,15 +24,7 @@ class EventLoop:
         self.time_us: float = 0
         self._ev_heap: List[Event] = []
         self._seq: itertools.count[int] = itertools.count()
-        self.handlers: dict[EventType, Callable[[Event], None]] = {}
         self.timestep_handler: Optional[Callable[[Event], None]] = timestep_handler
-
-    def register_handler(
-        self, ev_type: EventType, handler: Callable[[Event], None]
-    ) -> None:
-        if ev_type in self.handlers:
-            raise Exception(f"Handler already registered for {ev_type}")
-        self.handlers[ev_type] = handler
 
     def schedule_event(self, event: Event) -> None:
         event.seq = next(self._seq)
@@ -60,7 +52,7 @@ class EventLoop:
 
             print(50 * "-")
             print(
-                f"t={event.time_us} us: Dispatching {event.description} (seq={event.seq}) with payload={event.payload}"
+                f't={event.time_us} us: Dispatching "{event.description}" (seq={event.seq}) with payload={event.payload}'
             )
 
             self.time_us = event.time_us

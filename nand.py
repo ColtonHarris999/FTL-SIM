@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Callable, Optional
 
-from event import EventLoop, EventType
-from request import Request, RequestType
+from event import Event, EventLoop
 
 
 @dataclass(frozen=True)
@@ -42,8 +41,6 @@ class NANDTransactionType(Enum):
 class NANDTransaction:
     type: NANDTransactionType
     pa: PhysicalAddress
-    # lpa: int  # TODO: check if needed
-    # priority: int = 0
     start_time: float = 0
     callback: Optional[Callable[[NANDTransaction], None]] = None
     payload: Optional[object] = None
@@ -84,54 +81,147 @@ class NAND:
         self.num_reads: int = 0
         self.num_writes: int = 0
 
-        # Actual NAND structure
         self.channels: list[Channel] = [
-            Channel(event_loop, dma_us) for _ in range(num_channels)
+            Channel(event_loop, num_dies_per_channel) for _ in range(num_channels)
         ]
-        self.dies: list[Plane] = [
-            Plane(blocks_per_plane) for _ in range(num_channels * num_dies_per_channel)
-        ]
+
+    def is_ready(self, physical_addr: PhysicalAddress) -> bool:
+        return self.channels[physical_addr.channel].is_ready(physical_addr)
+
+    def read_page(self, transaction: NANDTransaction):
+        self.num_reads += 1
+        self.channels[transaction.pa.channel].read_page(transaction)
+
+    def write_page(self, transaction: NANDTransaction):
+        self.num_writes += 1
+        self.channels[transaction.pa.channel].write_page(transaction)
+
+
+class Channel:
+    """Represents a single channel in the SSD"""
+
+    def __init__(self, event_loop: EventLoop, num_dies_per_channel: int = 2) -> None:
+        self.event_loop = event_loop
+
+        self.dma_queue: list[NANDTransaction] = []
+        self.busy: bool = False
+
+        self.dies: list[Die] = [Die() for _ in range(num_dies_per_channel)]
+
+        self.read_us: int = 50
+        self.program_us: int = 200
+        self.dma_us: int = 5
 
     def is_ready(self, physical_addr: PhysicalAddress) -> bool:
         return not self.dies[physical_addr.die].busy
 
-    def write_page(self, req: Request):
-        if not req.physical_addr:
-            raise Exception("Request has no physical address assigned")
-        if not self.is_ready(req.physical_addr):
-            raise Exception(f"NAND die {req.physical_addr.die} is busy")
+    def do_dma(self, transaction: NANDTransaction):
+        if self.busy:
+            self.dma_queue.append(transaction)
+        else:
+            self.busy = True
+            self.event_loop.schedule_event(
+                Event(
+                    self.event_loop.time_us + self.dma_us,
+                    description="DMA_COMPLETE",
+                    payload=transaction,
+                    callback=self._handle_dma_complete,
+                )
+            )
+
+    def _handle_dma_complete(self, event: Event):
+        """
+        Handle the completion of a DMA operation for the given request.
+        """
+        assert isinstance(event.payload, NANDTransaction)
+        transaction: NANDTransaction = event.payload
+
+        # Start next DMA if any
+        if self.dma_queue:
+            next_req = self.dma_queue.pop(0)
+            self.event_loop.schedule_event(
+                Event(
+                    self.event_loop.time_us + self.dma_us,
+                    description="DMA_COMPLETE",
+                    payload=next_req,
+                    callback=self._handle_dma_complete,
+                )
+            )
+        else:
+            self.busy = False
+
+        if transaction.type == NANDTransactionType.READ:
+            self._read_transfer_done_callback(transaction)
+        elif transaction.type == NANDTransactionType.WRITE:
+            self._write_transfer_done_callback(transaction)
+
+    # -------------------------------------------------------
+    # Write flow
+    # -------------------------------------------------------
+    def write_page(self, transaction: NANDTransaction):
+        assert self.is_ready(transaction.pa), "NAND die is busy"
+
+        self.dies[transaction.pa.die].busy = True
 
         # Queue DMA transfer on appropriate channel
-        channel_idx = req.physical_addr.channel
-        self.channels[channel_idx].do_dma(req)
+        self.do_dma(transaction)
 
-    def _write_done_callback(self, req: Request):
+    def _write_transfer_done_callback(self, transaction: NANDTransaction):
         self.event_loop.schedule_event(
-            self.event_loop.time_us,
-            EventType.REQUEST_COMPLETE,
-            req,
+            Event(
+                self.event_loop.time_us + self.program_us,
+                description="NAND_WRITE_COMPLETE",
+                payload=transaction,
+                callback=self._write_done_callback,
+            )
         )
 
-    def read_page(self, req: Request):
-        # 1. Schedule NAND read complete after read_us
-        # 2. On NAND read complete, schedule DMA complete after dma_us
-        # 3. On DMA complete, invoke req_complete event
-        # self.dies[req.physical_addr.die].busy = True
+    def _write_done_callback(self, event: Event):
+        assert isinstance(event.payload, NANDTransaction)
+        transaction: NANDTransaction = event.payload
+
+        self.dies[transaction.pa.die].busy = False
+
+        assert transaction.callback is not None
+        transaction.callback(transaction)
+
+    # -------------------------------------------------------
+    # Read flow
+    # -------------------------------------------------------
+    def read_page(self, transaction: NANDTransaction):
+        assert self.is_ready(transaction.pa), "NAND die is busy"
+        self.dies[transaction.pa.die].busy = True
 
         self.event_loop.schedule_event(
-            self.event_loop.time_us + self.read_us,
-            EventType.NAND_READ_COMPLETE,
-            req,
+            Event(
+                self.event_loop.time_us + self.read_us,
+                description="NAND_READ_COMPLETE",
+                payload=transaction,
+                callback=self._read_done_callback,
+            )
         )
 
-    def _read_done_callback(self, req: Request):
-        self.event_loop.schedule_event(
-            self.event_loop.time_us,
-            EventType.REQUEST_COMPLETE,
-            req,
-        )
+    def _read_done_callback(self, event: Event):
+        assert isinstance(event.payload, NANDTransaction)
+        transaction: NANDTransaction = event.payload
+
+        self.do_dma(transaction)
+
+    def _read_transfer_done_callback(self, transaction: NANDTransaction):
+        self.dies[transaction.pa.die].busy = False
+
+        assert transaction.callback is not None
+        transaction.callback(transaction)
 
 
+class Die:
+    def __init__(self):
+        self.busy: bool = False
+
+
+# -------------------------------------------------------
+# Old stuff
+# -------------------------------------------------------
 class Plane:
     def __init__(self, blocks_per_plane=1024):
         self.busy: bool = False
@@ -161,55 +251,3 @@ class Block:
         self.num_free = self.num_pages
         self.num_invalid = 0
         self.erase_count += 1
-
-
-class Channel:
-    """Represents a single channel in the SSD"""
-
-    def __init__(self, event_loop: EventLoop, dma_us: int):
-        self.event_loop = event_loop
-
-        self.dma_queue: list[Request] = []
-        self.busy: bool = False
-
-        self.dma_us = dma_us
-
-    def do_dma(self, req: Request):
-        if self.busy:
-            self.dma_queue.append(req)
-        else:
-            self.busy = True
-            self.event_loop.schedule_event(
-                self.event_loop.time_us + self.dma_us,
-                EventType.DMA_COMPLETE,
-                req,
-                callback=self._handle_dma_complete,
-            )
-
-    def _handle_dma_complete(self, req: Request):
-        """
-        Handle the completion of a DMA operation for the given request.
-        """
-        print(f"DMA complete for {req}")
-        if req.type == RequestType.READ:
-            # read operation is done after DMA transfer
-            self.event_loop.schedule_event(
-                self.event_loop.time_us,
-                EventType.REQUEST_COMPLETE,
-                req,
-            )
-        elif req.type == RequestType.WRITE:
-            # TODO call NAND program callback
-            pass
-
-        # Start next DMA if any
-        if self.dma_queue:
-            next_req = self.dma_queue.pop(0)
-            self.event_loop.schedule_event(
-                self.event_loop.time_us + self.dma_us,
-                EventType.DMA_COMPLETE,
-                next_req,
-                callback=self._handle_dma_complete,
-            )
-        else:
-            self.busy = False

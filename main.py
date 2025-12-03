@@ -1,5 +1,3 @@
-from random import Random
-
 from request import Request, RequestType
 from simulator import SSDSimulator
 
@@ -26,20 +24,25 @@ if __name__ == "__main__":
     # ssd.run_simulation(requests)
 
     print("=== Example 4: Read/write mix ===")
-    requests = (
-        [
-            Request(RequestType.WRITE, 0, 1),
-            Request(RequestType.WRITE, 1, 2),
-            Request(RequestType.WRITE, 1, 3),
-            Request(RequestType.READ, 2, 1),
-            Request(RequestType.READ, 1, 2),
-            Request(RequestType.WRITE, 1, 3),
-            Request(RequestType.READ, 1, 2000),
-            Request(RequestType.WRITE, 1, 2099),
-            Request(RequestType.READ, 1, 2100),
-        ]
-        + [Request(RequestType.WRITE, i % 4, i * 10) for i in range(8)]
-        + [Request(RequestType.READ, i % 4, i * 10 + 5) for i in range(8)]
-    )
+    requests = [
+        Request(RequestType.WRITE, 0, 1),
+        Request(RequestType.WRITE, 1, 2),
+        Request(RequestType.WRITE, 1, 3),
+        Request(RequestType.READ, 2, 1),
+        Request(RequestType.READ, 1, 2),
+        Request(RequestType.WRITE, 1, 3),
+        Request(RequestType.READ, 1, 2000),
+        Request(RequestType.WRITE, 1, 2099),
+        Request(RequestType.READ, 1, 2100),
+    ]
+
+    # requests = [Request(RequestType.READ, i, 0) for i in range(10)]
+
     ssd.run_simulation(requests)
     ssd.print_statistics()
+    # print(ssd.requests)
+    # print(len(ssd.nand_scheduler.queue))
+    # ssd.nand_scheduler.try_dispatch()
+    # for channel in ssd.nand.channels:
+    #     for die in channel.dies:
+    #         print(die, die.busy)
