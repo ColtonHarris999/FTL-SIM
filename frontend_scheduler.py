@@ -48,7 +48,7 @@ class FrontendScheduler:
 
     def submit(self, request: Request) -> None:
         assert len(self.ncq) < self.ncq_size, "NCQ is full"
-        request.trace[TraceEvent.ARRIVAL] = self.event_loop.time_us
+        request.trace[TraceEvent.NCQ_QUEUED] = self.event_loop.time_us
         self.ncq.append(request)
 
     def try_dispatch(self) -> None:
@@ -66,9 +66,16 @@ class FrontendScheduler:
                         request.callback = self._handle_cache_read_complete
                         if self.cache.get(request):
                             request.status = RequestStatus.IN_PROGRESS
+                            request.trace[TraceEvent.NCQ_DISPATCHED] = (
+                                self.event_loop.time_us
+                            )
                     else:
                         request.status = RequestStatus.IN_PROGRESS
-                        pa: Optional[PhysicalAddress] = self.ftl.lpa_to_ppa(request.lba)
+                        request.trace[TraceEvent.NCQ_DISPATCHED] = (
+                            self.event_loop.time_us
+                        )
+                        pa: Optional[PhysicalAddress] = self.ftl.lba_to_ppa(request.lba)
+                        request.physical_addr = pa  # TODO
                         assert pa is not None
                         transaction: NANDTransaction = NANDTransaction(
                             type=NANDTransactionType.READ,
@@ -83,6 +90,9 @@ class FrontendScheduler:
                         request.callback = self._handle_cache_write_complete
                         if self.cache.put(request):
                             request.status = RequestStatus.IN_PROGRESS
+                            request.trace[TraceEvent.NCQ_DISPATCHED] = (
+                                self.event_loop.time_us
+                            )
                 case RequestType.FLUSH:
                     # TODO: implement flush handling
                     # probably just stop issuing new requests until NAND scheduler queue is empty
@@ -94,22 +104,16 @@ class FrontendScheduler:
         assert isinstance(transaction.payload, Request)
         request: Request = transaction.payload
 
-        request.trace[TraceEvent.NAND_READ_START] = transaction.start_time
-        request.trace[TraceEvent.NAND_READ_COMPLETE] = self.event_loop.time_us
-        request.trace[TraceEvent.COMPLETION] = self.event_loop.time_us
-        request.status = RequestStatus.COMPLETED
+        request.trace.update(transaction.trace)
+
         self.ncq.remove(request)
         self.sim.complete(request)
 
     def _handle_cache_read_complete(self, request: Request) -> None:
-        request.trace[TraceEvent.COMPLETION] = self.event_loop.time_us
-        request.status = RequestStatus.COMPLETED
         self.ncq.remove(request)
         self.sim.complete(request)
 
     def _handle_cache_write_complete(self, request: Request) -> None:
         # TODO: what if FUA flag is set?
-        request.trace[TraceEvent.COMPLETION] = self.event_loop.time_us
-        request.status = RequestStatus.COMPLETED
         self.ncq.remove(request)
         self.sim.complete(request)

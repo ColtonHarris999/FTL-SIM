@@ -1,29 +1,28 @@
-from abc import ABC, abstractmethod
 from typing import List
 
-from event import Event, EventLoop
+from event import EventLoop
 from nand import NAND, NANDTransaction, NANDTransactionType
+from request import TraceEvent
 
 
 class NANDScheduler:
-    def submit(self, transaction: NANDTransaction) -> None: ...
-    def try_dispatch(self) -> None: ...
-
-
-class MockScheduler(NANDScheduler):
     def __init__(self, event_loop: EventLoop, nand: NAND) -> None:
         self.event_loop: EventLoop = event_loop
         self.nand: NAND = nand
 
         self.queue: List[NANDTransaction] = []
-
-        self.num_reads: int = 0
-        self.num_writes: int = 0
+        self.trace: List[NANDTransaction] = []
 
     def submit(self, transaction: NANDTransaction) -> None:
         print(f"! Submitting {transaction} to NAND scheduler")
+        transaction.trace[TraceEvent.BACKEND_QUEUED] = self.event_loop.time_us
         self.queue.append(transaction)
 
+    def try_dispatch(self) -> None:
+        raise NotImplementedError
+
+
+class FIFOScheduler(NANDScheduler):
     def try_dispatch(self) -> None:
         print("Running NAND scheduler...")
         if not self.queue:
@@ -31,9 +30,9 @@ class MockScheduler(NANDScheduler):
 
         transaction: NANDTransaction = self.queue[0]
         if self.nand.is_ready(transaction.pa):
-            print(f"! Dispatching {transaction} to NAND")
+            # print(f"! Dispatching {transaction} to NAND")
             self.queue.pop(0)
-            transaction.start_time = self.event_loop.time_us
+            transaction.trace[TraceEvent.BACKEND_DISPATCHED] = self.event_loop.time_us
             match transaction.type:
                 case NANDTransactionType.WRITE:
                     self.nand.write_page(transaction)
@@ -41,26 +40,46 @@ class MockScheduler(NANDScheduler):
                     self.nand.read_page(transaction)
                 case _:
                     raise NotImplementedError
-        else:
-            print(f"! NAND not ready for {transaction}")
 
-    def _handle_nand_read_complete(self, event: Event) -> None:
-        assert isinstance(event.payload, NANDTransaction)
-        transaction: NANDTransaction = event.payload
+    # TODO: make sure callbacks are actually called
+    # def _handle_nand_read_complete(self, event: Event) -> None:
+    #     assert isinstance(event.payload, NANDTransaction)
+    #     transaction: NANDTransaction = event.payload
 
-        print(f"! NAND read complete for {transaction}")
+    #     print(f"! NAND read complete for {transaction}")
+    #     self.trace.append(transaction)
 
-        assert transaction.callback is not None
-        transaction.callback(transaction)
+    #     assert transaction.callback is not None
+    #     transaction.callback(transaction)
 
-    def _handle_nand_write_complete(self, event: Event) -> None:
-        assert isinstance(event.payload, NANDTransaction)
-        transaction: NANDTransaction = event.payload
+    # def _handle_nand_write_complete(self, event: Event) -> None:
+    #     assert isinstance(event.payload, NANDTransaction)
+    #     transaction: NANDTransaction = event.payload
 
-        print(f"! NAND write complete for {transaction}")
+    #     print(f"! NAND write complete for {transaction}")
+    #     self.trace.append(transaction)
 
-        assert transaction.callback is not None
-        transaction.callback(transaction)
+    #     assert transaction.callback is not None
+    #     transaction.callback(transaction)
+
+
+class NOOPScheduler(NANDScheduler):
+    def try_dispatch(self) -> None:
+        print("Running NAND scheduler...")
+        for transaction in self.queue:
+            if self.nand.is_ready(transaction.pa):
+                print(f"! Dispatching {transaction} to NAND")
+                self.queue.remove(transaction)
+                transaction.trace[TraceEvent.BACKEND_DISPATCHED] = (
+                    self.event_loop.time_us
+                )
+                match transaction.type:
+                    case NANDTransactionType.WRITE:
+                        self.nand.write_page(transaction)
+                    case NANDTransactionType.READ:
+                        self.nand.read_page(transaction)
+                    case _:
+                        raise NotImplementedError
 
 
 # class NANDScheduler(ABC):

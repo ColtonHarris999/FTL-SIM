@@ -164,9 +164,8 @@ class WriteCache:
             return  # another flush already scheduled
 
         # issue NAND read first if not all LOGICAL pages written
-        if len(page.lbas) < self.ftl.lbas_per_page:
-            pa: Optional[PhysicalAddress] = self.ftl.lpa_to_ppa(page.lpa)
-            assert pa is not None
+        pa: Optional[PhysicalAddress] = self.ftl.lpa_to_ppa(page.lpa)
+        if pa is not None and len(page.lbas) < self.ftl.lbas_per_page():
             transaction: NANDTransaction = NANDTransaction(
                 type=NANDTransactionType.READ,
                 pa=pa,
@@ -183,12 +182,9 @@ class WriteCache:
         page: CachePage = transaction.payload
 
         # mark all LBAs belonging to this page as cached
-        page.lbas.update(
-            range(
-                page.lpa * self.ftl.lbas_per_page,
-                (page.lpa + 1) * self.ftl.lbas_per_page,
-            )
-        )
+        first_lba = page.lpa * self.ftl.lbas_per_page()
+        last_lba = first_lba + self.ftl.lbas_per_page()
+        page.lbas.update(range(first_lba, last_lba))
 
         if page.num_outstanding_flushes == 0:
             self._flush_write_start(page)
@@ -207,7 +203,8 @@ class WriteCache:
         assert isinstance(transaction.payload, CachePage)
         page: CachePage = transaction.payload
 
-        # TODO: delay eviction if cache page is currently being read
+        # TODO: probably should delay eviction if cache page is currently being read
+
         # there could be multiple flush transactions in the system
         # -> only evict if latest one completes and cache is not dirty again
         if page.num_outstanding_flushes == 0:

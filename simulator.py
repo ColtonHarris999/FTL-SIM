@@ -2,9 +2,9 @@ from cache import WriteCache
 from event import Event, EventLoop
 from frontend_scheduler import FrontendScheduler
 from ftl import FlashTranslationLayer
-from nand import NAND
-from nand_scheduler import MockScheduler
-from request import Request, RequestType, TraceEvent
+from nand import NAND, NANDTimings, NANDGeometry
+from nand_scheduler import FIFOScheduler, NOOPScheduler
+from request import Request, RequestStatus, RequestType, TraceEvent
 
 
 class SSDSimulator:
@@ -12,9 +12,9 @@ class SSDSimulator:
         self.event_loop = EventLoop(self._timestep)
 
         # Logical components
-        self.nand = NAND(self.event_loop)
+        self.nand = NAND(self.event_loop, NANDGeometry(), NANDTimings())
         self.ftl = FlashTranslationLayer(self.nand)
-        self.nand_scheduler = MockScheduler(self.event_loop, self.nand)
+        self.nand_scheduler = NOOPScheduler(self.event_loop, self.nand)
         self.write_cache = WriteCache(self.event_loop, self.ftl, self.nand_scheduler)
         self.frontend_scheduler = FrontendScheduler(
             self.event_loop, self, self.write_cache, self.ftl, self.nand_scheduler
@@ -26,6 +26,9 @@ class SSDSimulator:
 
     def complete(self, request: Request):
         """Handle completion of a request."""
+        request.trace[TraceEvent.NCQ_COMPLETE] = self.event_loop.time_us
+        request.status = RequestStatus.COMPLETED
+
         self.completed_requests.append(request)
 
         # add arrival event for next request
@@ -54,7 +57,7 @@ class SSDSimulator:
         # create arrival events for requests to initially fill the NCQ
         for request in requests[: self.frontend_scheduler.ncq_size]:
             event = Event(
-                time_us=request.ready_time,
+                time_us=max(request.ready_time, self.event_loop.time_us),
                 description="REQUEST_ARRIVAL",
                 payload=request,
                 callback=self._handle_arrival,
@@ -73,23 +76,62 @@ class SSDSimulator:
         print(f"Simulation done in {self.event_loop.time_us} us")
         print("==================================================")
 
+    def plot_traces(self):
+        import matplotlib.pyplot as plt
+
+        sorted_requests = sorted(self.completed_requests, key=lambda r: r.id)
+
+        fig, ax = plt.subplots(figsize=(12, len(sorted_requests) * 0.3))
+
+        for i, req in enumerate(sorted_requests):
+            for time, event in req.trace.items():
+                ax.barh(
+                    i,
+                    left=time,
+                    width=1,
+                    # height=0.8,
+                    # label=event,
+                )
+
+        ax.set_yticks(range(len(sorted_requests)))
+        ax.set_yticklabels(
+            [f"Req {req.id} ({req.type.name})" for req in sorted_requests]
+        )
+        ax.set_xlabel("Time (us)")
+        ax.set_title("Request Timeline")
+        plt.tight_layout()
+        plt.savefig("request_timeline.png", format="png")
+        plt.close(fig)
+
     def print_statistics(self):
-        # TODO compute more statistics
         avg_write_response_time: float = 0
         avg_read_response_time: float = 0
-        for req in sorted(self.completed_requests, key=lambda r: r.id):
+        num_write_requests: int = 0
+        num_read_requests: int = 0
+
+        # for transaction in self.nand_scheduler.trace:
+        #     print(f"Traced transaction: {transaction}")
+
+        sorted_requests = sorted(self.completed_requests, key=lambda r: r.id)
+        for req in sorted_requests:
             print(
                 f"{req}: Response time = {req.get_response_time()} us, Trace = ({req.trace_str()})"
             )
             match req.type:
                 case RequestType.WRITE:
                     avg_write_response_time += req.get_response_time() or 0
+                    num_write_requests += 1
                 case RequestType.READ:
                     avg_read_response_time += req.get_response_time() or 0
+                    num_read_requests += 1
                 case _:
                     pass
-        print(f"Avg. write latency: {avg_write_response_time} us")
-        print(f"Avg. read latency: {avg_read_response_time} us")
+        print(
+            f"Avg. write latency: {avg_write_response_time / num_write_requests if num_write_requests > 0 else 0} us"
+        )
+        print(
+            f"Avg. read latency: {avg_read_response_time / num_read_requests if num_read_requests > 0 else 0} us"
+        )
 
         # Calculate cache hit rate
         total_read_requests = sum(
@@ -112,7 +154,7 @@ class SSDSimulator:
             1 for req in self.completed_requests if req.type == RequestType.WRITE
         )
         write_amplification = (
-            (self.nand.num_writes * self.ftl.lbas_per_page / total_logical_writes)
+            (self.nand.num_writes * self.ftl.lbas_per_page() / total_logical_writes)
             if total_logical_writes > 0
             else 0
         )

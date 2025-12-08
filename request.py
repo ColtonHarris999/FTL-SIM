@@ -23,9 +23,14 @@ class RequestStatus(Enum):
 
 class TraceEvent(Enum):
     READY = auto()
-    ARRIVAL = auto()
-    START = auto()
-    COMPLETION = auto()
+
+    NCQ_QUEUED = auto()
+    NCQ_DISPATCHED = auto()
+    NCQ_COMPLETE = auto()
+
+    BACKEND_QUEUED = auto()
+    BACKEND_DISPATCHED = auto()
+    # BACKEND_COMPLETE = auto()
 
     CACHE_READ_START = auto()
     CACHE_READ_COMPLETE = auto()
@@ -37,10 +42,12 @@ class TraceEvent(Enum):
     NAND_WRITE_START = auto()
     NAND_WRITE_COMPLETE = auto()
 
+    DMA_QUEUED = auto()
+    DMA_START = auto()
+    DMA_COMPLETE = auto()
+
 
 class Request:
-    """Represents an I/O request"""
-
     _id_counter = 0
 
     def __init__(self, req_type: RequestType, lba: int, ready_time: float = 0.0):
@@ -59,7 +66,7 @@ class Request:
         self.callback: Optional[Callable[[Request], None]] = None
 
     def __str__(self) -> str:
-        return f"Req[{self.id}, {self.type.name} #{self.lba}]"
+        return f"Req[{self.id}, {self.type.name} #{self.lba}, {self.physical_addr}]"
 
     def trace_str(self) -> str:
         return "  →  ".join(
