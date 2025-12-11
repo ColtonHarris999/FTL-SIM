@@ -1,3 +1,5 @@
+from random import sample
+
 from request import Request, RequestType
 from simulator import SSDSimulator
 
@@ -9,45 +11,21 @@ def sequential_write(size: int):
     writes = [Request(RequestType.WRITE, i, 0) for i in range(size)]
     ssd.run_simulation(writes)
 
-    reads = [Request(RequestType.READ, i, ssd.event_loop.time_us) for i in range(size)]
-    ssd.run_simulation(reads)
-
     ssd.print_statistics()
 
 
-def idk():
-    pass
-    # print("=== Example 1: Synchronous reads ===")
-    # requests = [Request(RequestType.READ, i, i) for i in range(10)]
-    # ssd.reset()
-    # ssd.run_simulation(requests)
-    # ssd.print_statistics()
+def random_write(size: int):
+    print("Running random write test...")
+    ssd = SSDSimulator()
 
-    # print("=== Example 2: Staggered reads ===")
-    # requests = [Request(RequestType.READ, i, 20 * i) for i in range(10)]
-    # ssd.reset()
-    # ssd.run_simulation(requests)
+    max_lba = ssd.ftl.get_max_lba()
 
-    # print("=== Example 3: Read/write mix ===")
-    # requests = [
-    #     Request(Random().choice([RequestType.READ, RequestType.WRITE]), i % 2, 0)
-    #     for i in range(10)
-    # ]
-    # ssd.reset()
-    # ssd.run_simulation(requests)
+    random_lbas = sample(range(max_lba), k=size)
 
-    # print("=== Example 4: Read/write mix ===")
-    # requests = [
-    #     Request(RequestType.WRITE, 0, 1),
-    #     Request(RequestType.WRITE, 1, 2),
-    #     Request(RequestType.WRITE, 1, 3),
-    #     Request(RequestType.READ, 2, 1),
-    #     Request(RequestType.READ, 1, 2),
-    #     Request(RequestType.WRITE, 1, 3),
-    #     Request(RequestType.READ, 1, 2000),
-    #     Request(RequestType.WRITE, 1, 2099),
-    #     Request(RequestType.READ, 1, 2100),
-    # ]
+    writes = [Request(RequestType.WRITE, lba, 0) for lba in random_lbas]
+    ssd.run_simulation(writes)
+
+    ssd.print_statistics()
 
 
 def parallelism():
@@ -67,10 +45,9 @@ def parallelism():
     ssd.run_simulation(reads)
 
     ssd.print_statistics()
-    ssd.plot_traces()
-    # print(ssd.ftl.mapping)
 
 
 if __name__ == "__main__":
-    # sequential_write(8)
-    parallelism()
+    # sequential_write(1000)
+    random_write(50)
+    # parallelism()

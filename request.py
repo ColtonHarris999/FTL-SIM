@@ -48,25 +48,35 @@ class TraceEvent(Enum):
 
 
 class Request:
-    _id_counter = 0
+    _tag_counter = 0
 
-    def __init__(self, req_type: RequestType, lba: int, ready_time: float = 0.0):
+    def __init__(
+        self,
+        req_type: RequestType,
+        starting_lba: int,
+        size: int = 1,
+        ready_time: float = 0.0,
+    ):
         # Assign unique ID
-        self.id = Request._id_counter
-        Request._id_counter += 1
+        self.tag = Request._tag_counter
+        Request._tag_counter += 1
 
         # Request attributes
         self.type = req_type
         self.status = RequestStatus.READY
         # self.fua = False  # TODO: implement Force Unit Access flag
-        self.lba = lba
+
+        self.starting_lba = starting_lba  # starting LBA
+        self.size = size  # number of LBAs
+        self.next_lba = starting_lba  # next LBA to process
+
         self.physical_addr: Optional[PhysicalAddress] = None
         self.ready_time: float = ready_time
         self.trace: dict[TraceEvent, float] = {TraceEvent.READY: ready_time}
         self.callback: Optional[Callable[[Request], None]] = None
 
     def __str__(self) -> str:
-        return f"Req[{self.id}, {self.type.name} #{self.lba}, {self.physical_addr}]"
+        return f"Req[{self.tag}, {self.type.name} #{self.starting_lba}, {self.physical_addr}]"
 
     def trace_str(self) -> str:
         return "  →  ".join(
@@ -74,4 +84,4 @@ class Request:
         )
 
     def get_response_time(self):
-        return self.trace[TraceEvent.COMPLETION] - self.trace[TraceEvent.ARRIVAL]
+        return self.trace[TraceEvent.NCQ_COMPLETE] - self.trace[TraceEvent.NCQ_QUEUED]

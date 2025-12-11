@@ -31,6 +31,7 @@ TODO: also start writeback after threshold reached?
 class CachePage:
     lpa: int
     lbas: set[int] = field(default_factory=set)
+    write_requests: list[Request] = field(default_factory=list)
     num_outstanding_flushes: int = 0
 
 
@@ -40,7 +41,7 @@ class WriteCache:
         event_loop: EventLoop,
         ftl: FlashTranslationLayer,
         scheduler: NANDScheduler,
-        num_pages: int = 1,
+        num_pages: int = 8,
     ) -> None:
         self.event_loop: EventLoop = event_loop
         self.ftl: FlashTranslationLayer = ftl
@@ -53,7 +54,7 @@ class WriteCache:
         # Timing parameters
         self.write_us: float = 10
         self.read_us: float = 10
-        self.flush_delay: float = 500  # timeframe for coalescing before writeback
+        self.flush_delay: float = 100  # timeframe for coalescing before writeback
 
     def contains(self, lba: int) -> bool:
         lpa: int = self.ftl.lba_to_lpa(lba)
@@ -63,7 +64,7 @@ class WriteCache:
         """
         Attempt to read request from cache. Returns True if read is scheduled, False otherwise. Caller must check if LBA is in cache first.
         """
-        assert self.contains(request.lba), "LBA not in cache"
+        assert self.contains(request.starting_lba), "LBA not in cache"
 
         if self.busy:
             return False
@@ -86,7 +87,7 @@ class WriteCache:
         """
         Attempt to write request to cache. Returns True if write is scheduled, False otherwise. A request is not scheduled if the cache is busy or there is insufficient space.
         """
-        if self.busy or not self._can_hold(request.lba):
+        if self.busy or not self._can_hold(request.starting_lba):
             return False
 
         print(f"! Writing {request} to cache")
@@ -94,7 +95,7 @@ class WriteCache:
 
         self.busy = True
 
-        lpa: int = self.ftl.lba_to_lpa(request.lba)
+        lpa: int = self.ftl.lba_to_lpa(request.starting_lba)
         if lpa not in self.cache:
             self.cache[lpa] = CachePage(lpa)
         page: CachePage = self.cache[lpa]
@@ -133,14 +134,18 @@ class WriteCache:
         self.busy = False
 
         # coalesce LBA into cache page
-        lpa: int = self.ftl.lba_to_lpa(request.lba)
+        lpa: int = self.ftl.lba_to_lpa(request.starting_lba)
         page: CachePage = self.cache[lpa]
-        page.lbas.add(request.lba)
+        page.lbas.add(request.starting_lba)
+        page.write_requests.append(request)
 
         # schedule flush after coalesce delay
+        # TODO: implement smarter flush policy
+        # utilization: float = len(self.cache) / self.num_pages
+        flush_delay: float = self.flush_delay  # if utilization < 0.5 else 0.0
         self.event_loop.schedule_event(
             Event(
-                time_us=self.event_loop.time_us + self.flush_delay,
+                time_us=self.event_loop.time_us + flush_delay,
                 description="CACHE_FLUSH_START",
                 payload=page,
                 callback=self._handle_flush_start,
@@ -204,6 +209,11 @@ class WriteCache:
         page: CachePage = transaction.payload
 
         # TODO: probably should delay eviction if cache page is currently being read
+
+        # add first flush to trace of requests
+        for request in page.write_requests:
+            if TraceEvent.NAND_WRITE_START not in request.trace:
+                request.trace.update(transaction.trace)
 
         # there could be multiple flush transactions in the system
         # -> only evict if latest one completes and cache is not dirty again

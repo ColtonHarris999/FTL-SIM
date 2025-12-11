@@ -1,10 +1,16 @@
-from enum import Enum
+import math
 from typing import Optional
 
 from nand import NAND, PhysicalAddress
 
 
 class FlashTranslationLayer:
+    """
+    Basic FTL implementation that maintains a LPA -> PPA mapping and sequentially allocates physical pages by striping across channels, dies, planes, and blocks.
+
+    Assumes page-level mapping and no garbage collection for simplicity.
+    """
+
     def __init__(
         self,
         nand: NAND,
@@ -13,7 +19,18 @@ class FlashTranslationLayer:
         self.mapping: dict[int, PhysicalAddress] = {}
         self.counter = 0  # stub counter for physical page allocation
 
-        self.lba_size: int = 4096  # bytes
+        self.lba_size: int = 4 * 1024  # bytes
+
+    def get_max_lba(self) -> int:
+        total_pages = (
+            self.nand.geometry.num_channels
+            * self.nand.geometry.num_dies_per_channel
+            * self.nand.geometry.num_planes_per_die
+            * self.nand.geometry.blocks_per_plane
+            * self.nand.geometry.pages_per_block
+        )
+        total_bytes = total_pages * self.nand.geometry.page_size
+        return total_bytes // self.lba_size
 
     def lbas_per_page(self) -> int:
         return self.nand.geometry.page_size // self.lba_size
@@ -29,8 +46,8 @@ class FlashTranslationLayer:
         return self.lpa_to_ppa(lpa)
 
     def allocate(self, lpa: int) -> PhysicalAddress:
-        # TODO call GC if needed
-        # TODO dont stripe across blocks?
+        # TODO dont stripe across blocks? prioritize plane parallelism first?
+        # stripe across channels, dies, planes, and blocks for maximum parallelism
         channel = self.counter % self.nand.geometry.num_channels
         remaining = self.counter // self.nand.geometry.num_channels
         die = remaining % self.nand.geometry.num_dies_per_channel
@@ -47,35 +64,29 @@ class FlashTranslationLayer:
         return pa
 
 
-# -------------------------------------------------------
-# Old stuff
-# -------------------------------------------------------
-class Plane:
-    def __init__(self, blocks_per_plane=1024):
-        self.busy: bool = False
-        self.blocks: list[Block] = [Block() for i in range(blocks_per_plane)]
-        self.next_free_block: int = 0
+class BlockLevelFTL(FlashTranslationLayer):
+    """
+    Block-level FTL implementation that maintains a LBA -> PPA mapping at block granularity.
+    """
+
+    pass
 
 
-class PageState(Enum):
-    FREE = "free"
-    VALID = "valid"
-    INVALID = "invalid"
+class PageLevelFTL(FlashTranslationLayer):
+    """
+    Page-level FTL implementation that maintains a LBA -> PPA mapping at page granularity.
+    """
+
+    def required_ram_bytes(self) -> int:
+        # Each entry needs ceil(log2(max_lba)) bits to store the PPA
+        entry_bytes = math.ceil(math.log2(self.get_max_lba())) / 8
+        num_entries = self.get_max_lba()
+        return num_entries * entry_bytes
 
 
-# What data is actually required?
-# Write pages sequentially in each block:
-# - next free page index per block
-# - erase `count per block
-# - inverse FTL mapping if we implement GC
-class Block:
-    def __init__(self, pages_per_block=64):
-        self.num_pages = pages_per_block
-        self.num_free = pages_per_block
-        self.num_invalid = 0
-        self.erase_count = 0
+class HybridFTL(FlashTranslationLayer):
+    """
+    Hybrid FTL implementation that uses block-level mapping for cold data and page-level mapping for hot data.
+    """
 
-    def erase(self):
-        self.num_free = self.num_pages
-        self.num_invalid = 0
-        self.erase_count += 1
+    pass

@@ -59,10 +59,10 @@ class FrontendScheduler:
                 case RequestType.READ:
                     if (
                         request.status != RequestStatus.READY
-                        or request.lba in dirty_lbas
+                        or request.starting_lba in dirty_lbas
                     ):
                         continue
-                    if self.cache.contains(request.lba):
+                    if self.cache.contains(request.starting_lba):
                         request.callback = self._handle_cache_read_complete
                         if self.cache.get(request):
                             request.status = RequestStatus.IN_PROGRESS
@@ -74,7 +74,9 @@ class FrontendScheduler:
                         request.trace[TraceEvent.NCQ_DISPATCHED] = (
                             self.event_loop.time_us
                         )
-                        pa: Optional[PhysicalAddress] = self.ftl.lba_to_ppa(request.lba)
+                        pa: Optional[PhysicalAddress] = self.ftl.lba_to_ppa(
+                            request.starting_lba
+                        )
                         request.physical_addr = pa  # TODO
                         assert pa is not None
                         transaction: NANDTransaction = NANDTransaction(
@@ -85,7 +87,7 @@ class FrontendScheduler:
                         )
                         self.nand_scheduler.submit(transaction)
                 case RequestType.WRITE:
-                    dirty_lbas.add(request.lba)
+                    dirty_lbas.add(request.starting_lba)
                     if request.status == RequestStatus.READY:
                         request.callback = self._handle_cache_write_complete
                         if self.cache.put(request):

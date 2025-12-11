@@ -41,27 +41,6 @@ class FIFOScheduler(NANDScheduler):
                 case _:
                     raise NotImplementedError
 
-    # TODO: make sure callbacks are actually called
-    # def _handle_nand_read_complete(self, event: Event) -> None:
-    #     assert isinstance(event.payload, NANDTransaction)
-    #     transaction: NANDTransaction = event.payload
-
-    #     print(f"! NAND read complete for {transaction}")
-    #     self.trace.append(transaction)
-
-    #     assert transaction.callback is not None
-    #     transaction.callback(transaction)
-
-    # def _handle_nand_write_complete(self, event: Event) -> None:
-    #     assert isinstance(event.payload, NANDTransaction)
-    #     transaction: NANDTransaction = event.payload
-
-    #     print(f"! NAND write complete for {transaction}")
-    #     self.trace.append(transaction)
-
-    #     assert transaction.callback is not None
-    #     transaction.callback(transaction)
-
 
 class NOOPScheduler(NANDScheduler):
     def try_dispatch(self) -> None:
@@ -80,6 +59,9 @@ class NOOPScheduler(NANDScheduler):
                         self.nand.read_page(transaction)
                     case _:
                         raise NotImplementedError
+
+
+# TODO: scheduler that merges reads to same page
 
 
 # class NANDScheduler(ABC):

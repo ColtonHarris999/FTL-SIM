@@ -2,7 +2,7 @@ from cache import WriteCache
 from event import Event, EventLoop
 from frontend_scheduler import FrontendScheduler
 from ftl import FlashTranslationLayer
-from nand import NAND, NANDTimings, NANDGeometry
+from nand import NAND, NANDGeometry, NANDTimings
 from nand_scheduler import FIFOScheduler, NOOPScheduler
 from request import Request, RequestStatus, RequestType, TraceEvent
 
@@ -76,33 +76,6 @@ class SSDSimulator:
         print(f"Simulation done in {self.event_loop.time_us} us")
         print("==================================================")
 
-    def plot_traces(self):
-        import matplotlib.pyplot as plt
-
-        sorted_requests = sorted(self.completed_requests, key=lambda r: r.id)
-
-        fig, ax = plt.subplots(figsize=(12, len(sorted_requests) * 0.3))
-
-        for i, req in enumerate(sorted_requests):
-            for time, event in req.trace.items():
-                ax.barh(
-                    i,
-                    left=time,
-                    width=1,
-                    # height=0.8,
-                    # label=event,
-                )
-
-        ax.set_yticks(range(len(sorted_requests)))
-        ax.set_yticklabels(
-            [f"Req {req.id} ({req.type.name})" for req in sorted_requests]
-        )
-        ax.set_xlabel("Time (us)")
-        ax.set_title("Request Timeline")
-        plt.tight_layout()
-        plt.savefig("request_timeline.png", format="png")
-        plt.close(fig)
-
     def print_statistics(self):
         avg_write_response_time: float = 0
         avg_read_response_time: float = 0
@@ -112,7 +85,7 @@ class SSDSimulator:
         # for transaction in self.nand_scheduler.trace:
         #     print(f"Traced transaction: {transaction}")
 
-        sorted_requests = sorted(self.completed_requests, key=lambda r: r.id)
+        sorted_requests = sorted(self.completed_requests, key=lambda r: r.tag)
         for req in sorted_requests:
             print(
                 f"{req}: Response time = {req.get_response_time()} us, Trace = ({req.trace_str()})"

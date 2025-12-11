@@ -11,7 +11,7 @@ from request import TraceEvent
 @dataclass(frozen=True)
 class NANDGeometry:
     num_channels: int = 2
-    num_dies_per_channel: int = 2
+    num_dies_per_channel: int = 4
     num_planes_per_die: int = 1
     blocks_per_plane: int = 1024
     pages_per_block: int = 64
