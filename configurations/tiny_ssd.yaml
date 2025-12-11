@@ -15,7 +15,7 @@ nand:
     read_us: 50
     program_us: 200
     erase_us: 1500
-    dma_us: 5
+    dma_us: 50
 
 write_cache:
 

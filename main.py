@@ -2,27 +2,12 @@ from random import sample
 
 from request import Request, RequestType
 from simulator import SSDSimulator
+from config import load_config, DEFAULT_CONFIG_PATH
 from pathlib import Path
-from typing import Any, Dict
-import yaml
 import argparse
 
-DEFAULT_CONFIG_PATH = Path("configurations/default_config.yaml")
 
 SSD = None # type: SSDSimulator | None
-
-def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
-    """
-    Load the simulator configuration from a YAML file and store it
-    in the global CONFIG dict. Returns the loaded config.
-    """
-    CONFIG: Dict[str, Any] = {}
-    path = Path(path)
-    with path.open("r", encoding="utf-8") as f:
-        CONFIG = yaml.safe_load(f) or {}
-    return CONFIG
-
-
 
 def sequential_write(size: int):
     print("Running sequential write test...")
