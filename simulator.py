@@ -1,21 +1,26 @@
-from cache import WriteCache
+from cache import WriteCache, WriteCacheConfig
 from event import Event, EventLoop
 from frontend_scheduler import FrontendScheduler
 from ftl import FlashTranslationLayer
 from nand import NAND, NANDGeometry, NANDTimings
-from nand_scheduler import FIFOScheduler, NOOPScheduler
+from nand_scheduler import SchedulerFactory
 from request import Request, RequestStatus, RequestType, TraceEvent
 
 
 class SSDSimulator:
-    def __init__(self):
+    def __init__(self, config: dict):
         self.event_loop = EventLoop(self._timestep)
+        # Get config data
+        self.nand_geometry = NANDGeometry(**config["nand"]["geometry"])
+        self.nand_timings = NANDTimings(**config["nand"]["timings"])
+        self.write_config = WriteCacheConfig(**config["write_cache"])
+        ## nand scheduler is done below
 
         # Logical components
-        self.nand = NAND(self.event_loop, NANDGeometry(), NANDTimings())
+        self.nand = NAND(self.event_loop, self.nand_geometry, self.nand_timings)
         self.ftl = FlashTranslationLayer(self.nand)
-        self.nand_scheduler = NOOPScheduler(self.event_loop, self.nand)
-        self.write_cache = WriteCache(self.event_loop, self.ftl, self.nand_scheduler)
+        self.nand_scheduler = SchedulerFactory.getScheduler(config["nand_scheduler"]["type"], self.event_loop, self.nand)
+        self.write_cache = WriteCache(self.event_loop, self.ftl, self.nand_scheduler, self.write_config)
         self.frontend_scheduler = FrontendScheduler(
             self.event_loop, self, self.write_cache, self.ftl, self.nand_scheduler
         )

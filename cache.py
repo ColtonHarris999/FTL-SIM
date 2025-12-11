@@ -26,6 +26,12 @@ read:
 TODO: also start writeback after threshold reached?
 """
 
+@dataclass(frozen=True)
+class WriteCacheConfig:
+    num_pages: int = 8
+    write_us: float = 10
+    read_us: float = 10
+    flush_delay: float = 100
 
 @dataclass
 class CachePage:
@@ -41,20 +47,20 @@ class WriteCache:
         event_loop: EventLoop,
         ftl: FlashTranslationLayer,
         scheduler: NANDScheduler,
-        num_pages: int = 8,
+        write_cache_config: WriteCacheConfig
     ) -> None:
         self.event_loop: EventLoop = event_loop
         self.ftl: FlashTranslationLayer = ftl
         self.nand_scheduler: NANDScheduler = scheduler
 
-        self.num_pages: int = num_pages
+        self.num_pages: int = write_cache_config.num_pages
         self.cache: dict[int, CachePage] = {}
         self.busy: bool = False
 
         # Timing parameters
-        self.write_us: float = 10
-        self.read_us: float = 10
-        self.flush_delay: float = 100  # timeframe for coalescing before writeback
+        self.write_us: float = write_cache_config.write_us
+        self.read_us: float = write_cache_config.read_us
+        self.flush_delay: float = write_cache_config.flush_delay  # timeframe for coalescing before writeback
 
     def contains(self, lba: int) -> bool:
         lpa: int = self.ftl.lba_to_lpa(lba)

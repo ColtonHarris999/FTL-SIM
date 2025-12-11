@@ -1,0 +1,33 @@
+# config.yaml
+
+nand:
+  geometry:
+    # NANDGeometry
+    num_channels: 2
+    num_dies_per_channel: 4
+    num_planes_per_die: 1
+    blocks_per_plane: 1024
+    pages_per_block: 64
+    page_size: 16384        # bytes (16 KiB)
+
+  timings:
+    # NANDTimings (all in microseconds)
+    read_us: 50
+    program_us: 200
+    erase_us: 1500
+    dma_us: 5
+
+write_cache:
+
+  # Capacity (number of cache "pages", where each page is 1 physical NAND page)
+  num_pages: 8
+
+  # Internal cache access timing (microseconds)
+  write_us: 10          # latency to "write to cache"
+  read_us: 10           # latency to "read from cache"
+
+  # Coalescing window before flushing to NAND (microseconds)
+  flush_delay: 100
+
+nand_scheduler:
+  type: "NOOP"        # "FIFO" or "NOOP"

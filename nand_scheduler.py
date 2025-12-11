@@ -4,7 +4,6 @@ from event import EventLoop
 from nand import NAND, NANDTransaction, NANDTransactionType
 from request import TraceEvent
 
-
 class NANDScheduler:
     def __init__(self, event_loop: EventLoop, nand: NAND) -> None:
         self.event_loop: EventLoop = event_loop
@@ -20,6 +19,18 @@ class NANDScheduler:
 
     def try_dispatch(self) -> None:
         raise NotImplementedError
+
+class SchedulerFactory():
+    def getScheduler(scheduler: str, event_Loop: EventLoop, nand: NAND) -> any:
+        """
+        Creates and returns a reference to the desired nand scheduler type
+        """
+        if scheduler == "NOOP":
+            return NOOPScheduler(event_Loop, nand)
+        elif scheduler == "FIFO":
+            return FIFOScheduler(event_Loop, nand)
+        else:
+            print(f"UNSUPPORTED NAND SCHEDULER TYPE: {scheduler}")
 
 
 class FIFOScheduler(NANDScheduler):

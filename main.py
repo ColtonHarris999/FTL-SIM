@@ -2,11 +2,31 @@ from random import sample
 
 from request import Request, RequestType
 from simulator import SSDSimulator
+from pathlib import Path
+from typing import Any, Dict
+import yaml
+import argparse
+
+DEFAULT_CONFIG_PATH = Path("configurations/default_config.yaml")
+
+SSD = None # type: SSDSimulator | None
+
+def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
+    """
+    Load the simulator configuration from a YAML file and store it
+    in the global CONFIG dict. Returns the loaded config.
+    """
+    CONFIG: Dict[str, Any] = {}
+    path = Path(path)
+    with path.open("r", encoding="utf-8") as f:
+        CONFIG = yaml.safe_load(f) or {}
+    return CONFIG
+
 
 
 def sequential_write(size: int):
     print("Running sequential write test...")
-    ssd = SSDSimulator()
+    ssd = SSD
 
     writes = [Request(RequestType.WRITE, i, 0) for i in range(size)]
     ssd.run_simulation(writes)
@@ -16,7 +36,7 @@ def sequential_write(size: int):
 
 def random_write(size: int):
     print("Running random write test...")
-    ssd = SSDSimulator()
+    ssd = SSD
 
     max_lba = ssd.ftl.get_max_lba()
 
@@ -30,7 +50,7 @@ def random_write(size: int):
 
 def parallelism():
     print("Running parallelism test...")
-    ssd = SSDSimulator()
+    ssd = SSD
 
     lbas_per_page = ssd.ftl.lbas_per_page()
 
@@ -48,6 +68,15 @@ def parallelism():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-c", "--config",
+        default=DEFAULT_CONFIG_PATH,
+        help=f"Path to YAML config file (default: {DEFAULT_CONFIG_PATH})",
+    )
+    args = parser.parse_args()
+    config = load_config(args.config)
+    SSD = SSDSimulator(config)
     # sequential_write(1000)
     random_write(50)
     # parallelism()
